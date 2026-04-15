@@ -4,16 +4,21 @@ const axios = require("axios");
 const cheerio = require("cheerio");
 const express = require("express");
 const cors = require("cors");
+const fs = require("fs");
+const path = require("path");
 
 const app = express();
 app.use(cors());
+app.use(express.json());
 
 const GRUPO_BOSS = "120363426540795167@g.us";
 const GRUPO_OLY  = "120363426376971165@g.us";
+const PORT = process.env.PORT || 3000;
 
 let mobs = [];
 let bossesOnline = [];
 let statusBossAnterior = {};
+let qrCodeData = null;
 
 // =======================
 // NORMALIZAR TEXTO 🔥
@@ -181,6 +186,20 @@ app.get("/bosses", (req, res) => {
 });
 
 // =======================
+app.get("/qrcode", (req, res) => {
+    res.json({ qrcode: qrCodeData });
+});
+
+// =======================
+app.get("/status", (req, res) => {
+    res.json({ 
+        status: "online", 
+        timestamp: new Date(),
+        qrCode: qrCodeData ? "pending" : "not_needed" 
+    });
+});
+
+// =======================
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState("auth");
     const { version } = await fetchLatestBaileysVersion();
@@ -198,9 +217,15 @@ async function startBot() {
     sock.ev.on("connection.update", (update) => {
         const { connection, qr } = update;
 
-        if (qr) qrcode.generate(qr, { small: true });
+        if (qr) {
+            qrCodeData = qr;
+            console.log("\n📱 QR CODE GERADO! Escaneie com WhatsApp:\n");
+            qrcode.generate(qr, { small: true });
+            console.log("\n⚠️ Se estiver usando Render, verifique os logs para o QR Code!\n");
+        }
 
         if (connection === "open") {
+            qrCodeData = null;
             console.log("✅ BOT ONLINE!");
 
             setInterval(() => {
@@ -269,7 +294,10 @@ async function startBot() {
     });
 }
 
-app.listen(3000);
+app.listen(PORT, () => {
+    console.log(`🚀 Servidor rodando em http://localhost:${PORT}`);
+});
+
 setInterval(atualizarBosses, 30000);
 
 startBot();
