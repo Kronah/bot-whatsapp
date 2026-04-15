@@ -1,5 +1,4 @@
-const { default: makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion } = require("@whiskeysockets/baileys");
-const qrcode = require("qrcode-terminal");
+const qrcodeTerminal = require("qrcode-terminal");
 const axios = require("axios");
 const cheerio = require("cheerio");
 const express = require("express");
@@ -10,6 +9,9 @@ const path = require("path");
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Importar Baileys dinamicamente (é ESM)
+let makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion;
 
 const GRUPO_BOSS = "120363426540795167@g.us";
 const GRUPO_OLY  = "120363426376971165@g.us";
@@ -201,16 +203,25 @@ app.get("/status", (req, res) => {
 
 // =======================
 async function startBot() {
-    const { state, saveCreds } = await useMultiFileAuthState("auth");
-    const { version } = await fetchLatestBaileysVersion();
+    try {
+        // Importar Baileys dinamicamente (ESM module)
+        if (!makeWASocket) {
+            const baileys = await import("@whiskeysockets/baileys");
+            makeWASocket = baileys.default;
+            useMultiFileAuthState = baileys.useMultiFileAuthState;
+            fetchLatestBaileysVersion = baileys.fetchLatestBaileysVersion;
+        }
 
-    await carregarMobs();
+        const { state, saveCreds } = await useMultiFileAuthState("auth");
+        const { version } = await fetchLatestBaileysVersion();
 
-    const sock = makeWASocket({
-        version,
-        auth: state,
-        browser: ["Termux", "Chrome", "1.0.0"]
-    });
+        await carregarMobs();
+
+        const sock = makeWASocket({
+            version,
+            auth: state,
+            browser: ["Termux", "Chrome", "1.0.0"]
+        });
 
     sock.ev.on("creds.update", saveCreds);
 
@@ -220,7 +231,7 @@ async function startBot() {
         if (qr) {
             qrCodeData = qr;
             console.log("\n📱 QR CODE GERADO! Escaneie com WhatsApp:\n");
-            qrcode.generate(qr, { small: true });
+            qrcodeTerminal.generate(qr, { small: true });
             console.log("\n⚠️ Se estiver usando Render, verifique os logs para o QR Code!\n");
         }
 
@@ -292,6 +303,11 @@ async function startBot() {
             }
         }
     });
+    } catch (error) {
+        console.error("❌ Erro ao inicializar bot:", error.message);
+        console.error(error);
+        setTimeout(() => startBot(), 5000);
+    }
 }
 
 app.listen(PORT, () => {
