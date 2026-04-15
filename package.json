@@ -1,0 +1,26 @@
+{
+  "name": "bot-whatsapp",
+  "version": "1.0.0",
+  "description": "WhatsApp Bot para Lineage 2 - Monitora Bosses e OLY",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "nodemon bot.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["whatsapp", "bot", "lineage", "baileys"],
+  "author": "Kronah",
+  "license": "MIT",
+  "type": "commonjs",
+  "engines": {
+    "node": "18.x"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^7.0.0-rc.9",
+    "axios": "^1.15.0",
+    "cheerio": "^1.2.0",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "qrcode-terminal": "^0.12.0"
+  }
+}
