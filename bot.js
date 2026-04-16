@@ -485,6 +485,8 @@ app.get("/reset-auth", async (req, res) => {
 
 // =======================
 async function startBot() {
+    console.log("📱 startBot() chamado");
+    
     // Fechar socket anterior se existir
     if (globalSocket && globalSocket.ws && globalSocket.ws.readyState !== globalSocket.ws.CLOSED) {
         try {
@@ -502,21 +504,31 @@ async function startBot() {
     }
     
     isConnecting = true;
+    console.log("🔄 Iniciando conexão com WhatsApp...");
     
     try {
         // Importar Baileys dinamicamente (ESM module)
         if (!makeWASocket) {
+            console.log("📦 Importando Baileys...");
             const baileys = await import("@whiskeysockets/baileys");
             makeWASocket = baileys.default;
             useMultiFileAuthState = baileys.useMultiFileAuthState;
             fetchLatestBaileysVersion = baileys.fetchLatestBaileysVersion;
+            console.log("✅ Baileys importado com sucesso");
         }
 
+        console.log("🔐 Carregando autenticação...");
         const { state, saveCreds } = await useMultiFileAuthState("auth");
         const { version } = await fetchLatestBaileysVersion();
+        console.log(`✅ Versão Baileys: ${version.version}`);
 
-        await carregarMobs();
+        // Carregar mobs de forma assíncrona (não bloqueia o início do bot)
+        carregarMobs().catch(err => {
+            console.warn("⚠️ Erro ao carregar mobs (bot continuará funcionando):", err.message);
+            mobs = []; // Mobs vazios, mas o bot continua
+        });
 
+        console.log("🔌 Conectando ao WebSocket...");
         const sock = makeWASocket({
             version,
             auth: state,
@@ -552,6 +564,8 @@ async function startBot() {
     sock.ev.on("connection.update", (update) => {
         const { connection, qr, lastDisconnect } = update;
 
+        console.log(`🔍 connection.update: connection=${connection}, qr=${!!qr}`);
+
         // Apenas gerar QR code se necessário (sem credenciais válidas)
         if (qr) {
             const now = Date.now();
@@ -559,9 +573,12 @@ async function startBot() {
             if (now - lastQRTime > 300000) {
                 qrCodeData = qr;
                 lastQRTime = now;
-                console.log("\n📱 QR CODE GERADO! Escaneie com WhatsApp:\n");
+                console.log("\n✅ QR CODE GERADO COM SUCESSO!\n");
+                console.log("📱 ESCANEIE O QR CODE:\n");
                 qrcodeTerminal.generate(qr, { small: true });
-                console.log("\n⚠️ Se estiver usando Render, verifique os logs para o QR Code!\n");
+                console.log("\n🌐 Ou acesse: https://bot-whatsapp-sw6u.onrender.com/\n");
+            } else {
+                console.log(`⏭️ QR Code será regenerado em ${Math.floor((300000 - (now - lastQRTime)) / 1000)}s`);
             }
         }
 
@@ -720,35 +737,12 @@ app.get('/', (req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+    console.log(`🚀 Server is running on port ${PORT}`);
 });
 
 // =======================
-// RECONNECT AUTOMATICALLY
-async function reconnectSocket() {
-    if (reconnectAttempts >= maxReconnectAttempts) {
-        console.error('Max reconnect attempts reached. Exiting...');
-        process.exit(1);
-    }
-
-    try {
-        console.log('Attempting to reconnect...');
-        reconnectAttempts++;
-        // Reinitialize the socket connection logic here
-        // Example: globalSocket = await makeWASocket(...);
-    } catch (error) {
-        console.error('Reconnect failed:', error);
-        setTimeout(reconnectSocket, 5000); // Retry after 5 seconds
-    }
-}
-
-// Exemplo de integração com o Baileys para gerar o QR Code
-if (globalSocket) {
-    globalSocket.ev.on('connection.update', (update) => {
-        const { qr } = update;
-        if (qr) {
-            gerarQRCodePNG(qr); // Gerar o QR Code em PNG quando disponível
-        }
-    });
-}
+// INICIAR BOT E MONITORAMENTO
+console.log("⏳ Iniciando bot WhatsApp...");
+setInterval(atualizarBosses, 30000);
+startBot();
 
