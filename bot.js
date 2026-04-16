@@ -439,14 +439,27 @@ app.get('/png', async (req, res) => {
 });
 
 // =======================
-// Health Check para UptimeRobot (mantém bot acordado)
+// =======================
+// HEALTH CHECK ENDPOINTS
+// =======================
+
+// Ping simples (resposta rápida)
+app.get("/ping", (req, res) => {
+    res.status(200).send('pong');
+});
+
+// Health check detalhado para UptimeRobot
 app.get("/health", (req, res) => {
+    const isWhatsAppConnected = globalSocket && globalSocket.ws && globalSocket.ws.readyState === 1;
+    
     res.status(200).json({ 
-        status: "healthy",
+        status: isWhatsAppConnected ? "connected" : "disconnected",
+        whatsapp: isWhatsAppConnected ? "online" : "offline",
+        qrPending: !!qrCodeData,
         timestamp: new Date().toISOString(),
-        uptime: process.uptime(),
+        uptime: Math.floor(process.uptime()),
         bosses: bossesOnline.length,
-        qrPending: !!qrCodeData
+        memoryUsage: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB'
     });
 });
 
@@ -743,6 +756,7 @@ app.listen(PORT, () => {
 // =======================
 // INICIAR BOT E MONITORAMENTO
 console.log("⏳ Iniciando bot WhatsApp...");
+console.log(`🌐 Health check disponível em: /health e /ping`);
 setInterval(atualizarBosses, 30000);
 startBot();
 
