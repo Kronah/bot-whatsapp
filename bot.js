@@ -520,13 +520,16 @@ async function startBot() {
         const sock = makeWASocket({
             version,
             auth: state,
-            browser: ["Termux", "Chrome", "1.0.0"],
-            qrTimeout: 600000, // 10 minutos para escanear QR code
+            browser: ["Ubuntu", "Chrome", "20.0.0"],
+            qrTimeout: 120000, // 2 minutos para escanear QR code
             retryRequestDelayMs: 100,
             shouldSyncHistoryMessage: () => false,
             generateHighQualityLinkPreview: false,
             syncFullHistory: false,
-            markOnlineThreshold: 30000
+            markOnlineThreshold: 15000,
+            keepAliveIntervalMs: 30000,
+            printQRInTerminal: true,
+            defaultQueryTimeoutMs: 60000
         });
 
         // Armazenar referência global
@@ -534,6 +537,17 @@ async function startBot() {
         reconnectAttempts = 0;
 
     sock.ev.on("creds.update", saveCreds);
+
+    // Keep-alive: Enviar ping periodicamente para manter a conexão
+    const keepAliveInterval = setInterval(() => {
+        if (sock.ws && sock.ws.readyState === 1) { // WebSocket OPEN
+            try {
+                sock.ws.ping();
+            } catch (e) {
+                console.log("⚠️ Erro ao enviar keep-alive:", e.message);
+            }
+        }
+    }, 30000);
 
     sock.ev.on("connection.update", (update) => {
         const { connection, qr, lastDisconnect } = update;
@@ -576,19 +590,32 @@ async function startBot() {
                 reconnectAttempts = 0;
                 setTimeout(() => startBot(), 3000);
             } else if (statusCode === 515) {
-                // Erro 515: Pareamento funcionou mas a conexão foi rejeitada
-                // Aguarda mais tempo antes de tentar novamente
                 console.log("⚠️ Dispositivo rejeitado pelo WhatsApp (515). Aguardando 10 segundos...");
                 isConnecting = false;
                 reconnectAttempts = 0;
                 setTimeout(() => startBot(), 10000);
-            } else if (statusCode === undefined && reconnectAttempts < maxReconnectAttempts) {
-                // Reconexão por erro temporário (limite a tentativas)
+            } else if (statusCode === 408 || statusCode === 500 || statusCode === 503) {
+                // Erros de servidor/timeout - reconectar com backoff
                 reconnectAttempts++;
                 const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
-                console.log(`⚠️ Erro temporário. Tentativa ${reconnectAttempts}/${maxReconnectAttempts} em ${delay}ms...`);
+                console.log(`⚠️ Erro ${statusCode}. Tentativa ${reconnectAttempts}/${maxReconnectAttempts} em ${delay}ms...`);
                 isConnecting = false;
-                setTimeout(() => startBot(), delay);
+                if (reconnectAttempts < maxReconnectAttempts) {
+                    setTimeout(() => startBot(), delay);
+                } else {
+                    console.log("❌ Máximo de tentativas atingido. Aguardando ação do usuário...");
+                }
+            } else if (statusCode === undefined) {
+                // Desconexão sem status code específico - reconectar rápido
+                reconnectAttempts++;
+                const delay = Math.min(3000 * reconnectAttempts, 15000);
+                console.log(`⚠️ Desconexão inesperada. Tentativa ${reconnectAttempts}/${maxReconnectAttempts} em ${delay}ms...`);
+                isConnecting = false;
+                if (reconnectAttempts < maxReconnectAttempts) {
+                    setTimeout(() => startBot(), delay);
+                } else {
+                    console.log("⏸️ Muitas desconexões. Aguardando ação do usuário...");
+                }
             } else {
                 console.log("⏸️ Conexão fechada. Aguardando ação do usuário...");
                 isConnecting = false;
@@ -667,6 +694,16 @@ async function startBot() {
                 await sock.sendMessage(from, { text: dados });
             }
         }
+    });
+
+    // Sincronizar participantes do grupo
+    sock.ev.on("group-participants.update", async ({ id, participants, action }) => {
+        console.log(`👥 Atualização no grupo ${id}: ${action} (${participants.length} participantes)`);
+    });
+
+    // Sincronizar chats
+    sock.ev.on("chats.update", (chatsUpdate) => {
+        console.log(`💬 Sincronização de chats: ${chatsUpdate.length} atualizações`);
     });
     } catch (error) {
         console.error("❌ Erro ao inicializar bot:", error.message);
