@@ -346,7 +346,11 @@ app.get("/", (req, res) => {
 // Endpoint para gerar QR Code como PNG
 app.get("/qrcode-image", async (req, res) => {
     if (!qrCodeData) {
-        return res.status(204).send();
+        return res.status(200).json({ 
+            status: "waiting",
+            message: "QR code não está disponível. Bot iniciando...",
+            timestamp: new Date().toISOString()
+        });
     }
 
     try {
@@ -369,7 +373,7 @@ app.get("/qrcode-image", async (req, res) => {
         res.send(buffer);
     } catch (err) {
         console.error('Erro ao gerar QR Code:', err);
-        res.status(500).json({ error: 'Erro ao gerar QR Code' });
+        res.status(500).json({ error: 'Erro ao gerar QR Code', message: err.message });
     }
 });
 
@@ -403,7 +407,11 @@ app.get('/qrcode.png', (req, res) => {
 // ENDPOINT SIMPLES PARA QR CODE PNG
 app.get('/png', async (req, res) => {
     if (!qrCodeData) {
-        return res.status(204).send();
+        return res.status(200).json({ 
+            status: "waiting",
+            message: "QR code não está disponível. Bot iniciando...",
+            timestamp: new Date().toISOString()
+        });
     }
 
     try {
@@ -426,7 +434,7 @@ app.get('/png', async (req, res) => {
         res.send(buffer);
     } catch (err) {
         console.error('Erro ao gerar QR Code PNG:', err);
-        res.status(500).json({ error: 'Erro ao gerar QR Code' });
+        res.status(500).json({ error: 'Erro ao gerar QR Code', message: err.message });
     }
 });
 
