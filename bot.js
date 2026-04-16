@@ -369,6 +369,18 @@ app.get("/qrcode-image", async (req, res) => {
 });
 
 // =======================
+// Health Check para UptimeRobot (mantém bot acordado)
+app.get("/health", (req, res) => {
+    res.status(200).json({ 
+        status: "healthy",
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        bosses: bossesOnline.length,
+        qrPending: !!qrCodeData
+    });
+});
+
+// =======================
 async function startBot() {
     try {
         // Importar Baileys dinamicamente (ESM module)
