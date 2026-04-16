@@ -504,11 +504,19 @@ async function startBot() {
             
             // 401 = Desautorizado (credenciais inválidas/expiradas)
             // 428 = Precondition Required (sessão expirada)
+            // 515 = Stream error (device rejection after pairing)
             if (statusCode === 401 || statusCode === 428) {
                 console.log("🔄 Credenciais inválidas. Reconectando com novo QR code...");
                 isConnecting = false;
                 reconnectAttempts = 0;
                 setTimeout(() => startBot(), 3000);
+            } else if (statusCode === 515) {
+                // Erro 515: Pareamento funcionou mas a conexão foi rejeitada
+                // Aguarda mais tempo antes de tentar novamente
+                console.log("⚠️ Dispositivo rejeitado pelo WhatsApp (515). Aguardando 10 segundos...");
+                isConnecting = false;
+                reconnectAttempts = 0;
+                setTimeout(() => startBot(), 10000);
             } else if (statusCode === undefined && reconnectAttempts < maxReconnectAttempts) {
                 // Reconexão por erro temporário (limite a tentativas)
                 reconnectAttempts++;
