@@ -22,6 +22,8 @@ let mobs = [];
 let bossesOnline = [];
 let statusBossAnterior = {};
 let qrCodeData = null;
+let isConnecting = false;
+let lastQRTime = 0;
 
 // =======================
 // NORMALIZAR TEXTO 🔥
@@ -382,6 +384,14 @@ app.get("/health", (req, res) => {
 
 // =======================
 async function startBot() {
+    // Evitar múltiplas tentativas simultâneas
+    if (isConnecting) {
+        console.log("⏳ Já está tentando conectar...");
+        return;
+    }
+    
+    isConnecting = true;
+    
     try {
         // Importar Baileys dinamicamente (ESM module)
         if (!makeWASocket) {
@@ -405,25 +415,37 @@ async function startBot() {
     sock.ev.on("creds.update", saveCreds);
 
     sock.ev.on("connection.update", (update) => {
-        const { connection, qr } = update;
+        const { connection, qr, lastDisconnect } = update;
 
+        // Evitar múltiplos QR codes (apenas um a cada 10 segundos)
         if (qr) {
-            qrCodeData = qr;
-            console.log("\n📱 QR CODE GERADO! Escaneie com WhatsApp:\n");
-            qrcodeTerminal.generate(qr, { small: true });
-            console.log("\n⚠️ Se estiver usando Render, verifique os logs para o QR Code!\n");
+            const now = Date.now();
+            if (now - lastQRTime > 10000) {
+                qrCodeData = qr;
+                lastQRTime = now;
+                console.log("\n📱 QR CODE GERADO! Escaneie com WhatsApp:\n");
+                qrcodeTerminal.generate(qr, { small: true });
+                console.log("\n⚠️ Se estiver usando Render, verifique os logs para o QR Code!\n");
+            }
         }
 
         if (connection === "open") {
             qrCodeData = null;
-            console.log("✅ BOT ONLINE!");
+            isConnecting = false;
+            console.log("✅ BOT ONLINE! Conexão estabelecida com WhatsApp");
 
             setInterval(() => {
                 monitorarBoss(sock);
             }, 120000);
         }
 
-        if (connection === "close") startBot();
+        if (connection === "close") {
+            console.log("❌ Conexão fechada. Reconectando em 5 segundos...");
+            if (!isConnecting) {
+                isConnecting = true;
+                setTimeout(() => startBot(), 5000);
+            }
+        }
     });
 
     sock.ev.on("messages.upsert", async ({ messages }) => {
@@ -500,8 +522,9 @@ async function startBot() {
     });
     } catch (error) {
         console.error("❌ Erro ao inicializar bot:", error.message);
-        console.error(error);
-        setTimeout(() => startBot(), 5000);
+        console.error("🔄 Tentando reconectar em 10 segundos...");
+        isConnecting = false;
+        setTimeout(() => startBot(), 10000);
     }
 }
 
