@@ -432,14 +432,26 @@ async function startBot() {
 
         const from = msg.key.remoteJid;
         const texto = msg.message.conversation || "";
+        
+        console.log(`📨 Mensagem recebida: "${texto}" de ${from}`);
 
-        if (!from.endsWith("@g.us")) return;
+        if (!from.endsWith("@g.us")) {
+            console.log("⏭️ Ignorado: não é um grupo");
+            return;
+        }
+
+        console.log(`\n🔍 Verificando grupos...`);
+        console.log(`   GRUPO_BOSS: ${GRUPO_BOSS}`);
+        console.log(`   GRUPO_OLY: ${GRUPO_OLY}`);
+        console.log(`   FROM: ${from}\n`);
 
         // =======================
         if (from === GRUPO_BOSS) {
+            console.log("✅ Mensagem do GRUPO_BOSS detectada");
 
             if (texto.startsWith(".")) {
                 const busca = texto.replace(".", "");
+                console.log(`🔎 Buscando mob: ${busca}`);
 
                 const resultados = buscarMob(busca);
 
@@ -455,6 +467,7 @@ async function startBot() {
             }
 
             if (texto === "Bosslive") {
+                console.log("🐉 Comando Bosslive detectado");
                 await atualizarBosses();
 
                 let resposta = "🔥 BOSS ONLINE:\n\n";
@@ -469,13 +482,16 @@ async function startBot() {
 
         // =======================
         if (from === GRUPO_OLY) {
+            console.log("✅ Mensagem do GRUPO_OLY detectada");
 
             if (texto === "Oly") {
+                console.log("🏆 Comando Oly detectado");
                 const dados = await pegarOly();
                 await sock.sendMessage(from, { text: dados });
             }
 
             if (texto.startsWith("/")) {
+                console.log("⚔️ Comando de classe detectado");
                 const classe = texto.replace("/", "");
                 const dados = await pegarOlyPorClasse(classe);
                 await sock.sendMessage(from, { text: dados });
