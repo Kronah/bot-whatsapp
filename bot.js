@@ -400,6 +400,37 @@ app.get('/qrcode.png', (req, res) => {
 });
 
 // =======================
+// ENDPOINT SIMPLES PARA QR CODE PNG
+app.get('/png', async (req, res) => {
+    if (!qrCodeData) {
+        return res.status(204).send();
+    }
+
+    try {
+        const qrImage = await QRCode.toDataURL(qrCodeData, {
+            errorCorrectionLevel: 'H',
+            type: 'image/png',
+            width: 300,
+            margin: 10,
+            color: {
+                dark: '#000000',
+                light: '#FFFFFF',
+            }
+        });
+
+        const base64Data = qrImage.replace(/^data:image\/png;base64,/, '');
+        const buffer = Buffer.from(base64Data, 'base64');
+
+        res.setHeader('Content-Type', 'image/png');
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.send(buffer);
+    } catch (err) {
+        console.error('Erro ao gerar QR Code PNG:', err);
+        res.status(500).json({ error: 'Erro ao gerar QR Code' });
+    }
+});
+
+// =======================
 // Health Check para UptimeRobot (mantém bot acordado)
 app.get("/health", (req, res) => {
     res.status(200).json({ 
