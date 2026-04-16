@@ -1,4 +1,5 @@
 const qrcodeTerminal = require("qrcode-terminal");
+const QRCode = require("qrcode");
 const axios = require("axios");
 const cheerio = require("cheerio");
 const express = require("express");
@@ -199,6 +200,172 @@ app.get("/status", (req, res) => {
         timestamp: new Date(),
         qrCode: qrCodeData ? "pending" : "not_needed" 
     });
+});
+
+// =======================
+// Página HTML para escanear QR Code
+app.get("/", (req, res) => {
+    const htmlContent = `
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Bot - QR Code</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 15px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            text-align: center;
+            max-width: 500px;
+            width: 100%;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        #qr-container {
+            background: #f9f9f9;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            min-height: 300px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        #qr-image {
+            max-width: 100%;
+            height: auto;
+        }
+        .loading {
+            color: #667eea;
+            font-size: 16px;
+        }
+        .error {
+            background: #fee;
+            color: #c00;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        .instructions {
+            background: #e8f5e9;
+            color: #2e7d32;
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 13px;
+            line-height: 1.6;
+            margin-top: 20px;
+        }
+        .status {
+            margin-top: 20px;
+            font-size: 12px;
+            color: #999;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 Bot WhatsApp</h1>
+        <p class="subtitle">Escaneie o QR Code com seu WhatsApp</p>
+        
+        <div class="error" id="error"></div>
+        
+        <div id="qr-container">
+            <p class="loading">Carregando QR Code...</p>
+        </div>
+        
+        <div class="instructions">
+            <strong>Como vincular:</strong><br>
+            1. Abra WhatsApp no seu celular<br>
+            2. Vá em: Configurações → Dispositivos vinculados → Vincular um dispositivo<br>
+            3. Escaneie o QR Code acima
+        </div>
+        
+        <div class="status">
+            Atualiza a cada 2 segundos | Servidor Online ✅
+        </div>
+    </div>
+
+    <script>
+        const qrContainer = document.getElementById('qr-container');
+        const errorDiv = document.getElementById('error');
+
+        async function loadQRCode() {
+            try {
+                const response = await fetch('/qrcode-image');
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = URL.createObjectURL(blob);
+                    qrContainer.innerHTML = '<img id="qr-image" src="' + url + '" alt="QR Code">';
+                    errorDiv.style.display = 'none';
+                } else if (response.status === 204) {
+                    qrContainer.innerHTML = '<p style="color: #4caf50; font-size: 18px;">✅ Bot Conectado!<br><br>Nenhum QR Code necessário</p>';
+                    errorDiv.style.display = 'none';
+                }
+            } catch (err) {
+                qrContainer.innerHTML = '<p class="loading">Aguardando servidor...</p>';
+            }
+        }
+
+        loadQRCode();
+        setInterval(loadQRCode, 2000);
+    </script>
+</body>
+</html>
+    `;
+    res.send(htmlContent);
+});
+
+// =======================
+// Endpoint para gerar QR Code como PNG
+app.get("/qrcode-image", async (req, res) => {
+    if (!qrCodeData) {
+        return res.status(204).send();
+    }
+
+    try {
+        const qrImage = await QRCode.toDataURL(qrCodeData, {
+            errorCorrectionLevel: 'H',
+            type: 'image/png',
+            width: 300,
+            margin: 10,
+            color: {
+                dark: '#000000',
+                light: '#FFFFFF',
+            }
+        });
+
+        const base64Data = qrImage.replace(/^data:image\/png;base64,/, '');
+        const buffer = Buffer.from(base64Data, 'base64');
+
+        res.setHeader('Content-Type', 'image/png');
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.send(buffer);
+    } catch (err) {
+        console.error('Erro ao gerar QR Code:', err);
+        res.status(500).json({ error: 'Erro ao gerar QR Code' });
+    }
 });
 
 // =======================
