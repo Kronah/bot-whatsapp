@@ -383,6 +383,39 @@ app.get("/health", (req, res) => {
 });
 
 // =======================
+// Reset Auth - Deleta credenciais e força novo QR code
+app.get("/reset-auth", async (req, res) => {
+    try {
+        const authPath = path.join(process.cwd(), "auth");
+        
+        // Deletar pasta auth
+        if (fs.existsSync(authPath)) {
+            fs.rmSync(authPath, { recursive: true, force: true });
+            console.log("🗑️ Pasta auth deletada!");
+        }
+        
+        qrCodeData = null;
+        isConnecting = false;
+        
+        res.json({ 
+            status: "success",
+            message: "Auth folder deleted. Restarting bot...",
+            timestamp: new Date().toISOString()
+        });
+        
+        // Reiniciar bot após 2 segundos
+        setTimeout(() => startBot(), 2000);
+        
+    } catch (error) {
+        console.error("Erro ao deletar auth:", error.message);
+        res.status(500).json({ 
+            status: "error",
+            message: error.message 
+        });
+    }
+});
+
+// =======================
 async function startBot() {
     // Evitar múltiplas tentativas simultâneas
     if (isConnecting) {
