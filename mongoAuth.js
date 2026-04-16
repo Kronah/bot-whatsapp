@@ -1,4 +1,5 @@
 const { MongoClient } = require("mongodb");
+const { BufferJSON } = require("@whiskeysockets/baileys");
 
 const MONGO_URI = process.env.MONGO_URI;
 
@@ -18,19 +19,26 @@ async function connectMongo() {
 async function useMongoDBAuthState() {
     await connectMongo();
 
-    const data = await collection.findOne({ _id: "auth_info" }) || {};
-
-    const saveCreds = async (creds) => {
+    const writeData = async (data) => {
         await collection.updateOne(
-            { _id: "auth_info" },
-            { $set: creds },
+            { _id: "auth" },
+            { $set: JSON.parse(JSON.stringify(data, BufferJSON.replacer)) },
             { upsert: true }
         );
     };
 
+    const readData = async () => {
+        const data = await collection.findOne({ _id: "auth" });
+        return data
+            ? JSON.parse(JSON.stringify(data, BufferJSON.reviver))
+            : {};
+    };
+
+    const state = await readData();
+
     return {
-        state: data,
-        saveCreds
+        state,
+        saveCreds: writeData
     };
 }
 
