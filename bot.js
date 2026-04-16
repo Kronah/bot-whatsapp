@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const qrcode = require("qrcode-terminal");
 
 process.on("uncaughtException", console.error);
 process.on("unhandledRejection", console.error);
@@ -10,16 +11,9 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-// =========================
-// CONTROLE GLOBAL
-// =========================
 let sock = null;
 let isStarted = false;
-let pairingCodeGenerated = false;
 
-// =========================
-// BOT PRINCIPAL
-// =========================
 async function startBot() {
     if (isStarted) return;
     isStarted = true;
@@ -34,7 +28,6 @@ async function startBot() {
             DisconnectReason
         } = baileys;
 
-        // 🔐 AUTH LOCAL (Render free - temporário)
         const { state, saveCreds } = await useMultiFileAuthState("./auth");
 
         const { version } = await fetchLatestBaileysVersion();
@@ -42,36 +35,24 @@ async function startBot() {
         sock = makeWASocket({
             version,
             auth: state,
-            browser: ["Ubuntu", "Chrome", "120.0.0"],
-            markOnlineOnConnect: false
+            browser: ["Ubuntu", "Chrome", "120.0.0"]
         });
 
         sock.ev.on("creds.update", saveCreds);
 
         // =========================
-        // 🔑 PAREAMENTO (UMA VEZ)
-        // =========================
-        if (!sock.authState.creds.registered && !pairingCodeGenerated) {
-            pairingCodeGenerated = true;
-
-            const code = await sock.requestPairingCode("5592993278383");
-
-            console.log("\n🔑 CÓDIGO DE PAREAMENTO:");
-            console.log(code);
-            console.log("\n👉 WhatsApp > Dispositivos conectados > Conectar\n");
-
-            // ⏳ SEGURA PRA NÃO INVALIDAR
-            await new Promise(resolve => setTimeout(resolve, 60000));
-        }
-
-        // =========================
-        // CONEXÃO
+        // QR CODE
         // =========================
         sock.ev.on("connection.update", (update) => {
-            const { connection, lastDisconnect } = update;
+            const { connection, qr, lastDisconnect } = update;
+
+            if (qr) {
+                console.log("\n📱 ESCANEIE O QR CODE:\n");
+                qrcode.generate(qr, { small: true });
+            }
 
             if (connection === "open") {
-                console.log("✅ BOT CONECTADO COM SUCESSO!");
+                console.log("✅ BOT CONECTADO!");
             }
 
             if (connection === "close") {
@@ -79,13 +60,10 @@ async function startBot() {
 
                 console.log("❌ Desconectado:", statusCode);
 
-                // 🔴 sessão inválida → não loopar código
                 if (statusCode === DisconnectReason.loggedOut) {
-                    console.log("⚠️ Sessão inválida. Reinicie manualmente.");
-                    process.exit(0);
+                    console.log("⚠️ Sessão perdida. Escaneie novamente.");
                 }
 
-                // 🔁 reconexão controlada
                 setTimeout(() => {
                     isStarted = false;
                     startBot();
@@ -111,7 +89,7 @@ async function startBot() {
         });
 
     } catch (err) {
-        console.error("❌ Erro geral:", err.message);
+        console.error("❌ Erro:", err.message);
 
         setTimeout(() => {
             isStarted = false;
@@ -121,7 +99,7 @@ async function startBot() {
 }
 
 // =========================
-// SERVER (ANTI-SLEEP RENDER)
+// SERVIDOR (ANTI-SLEEP)
 // =========================
 app.get("/", (req, res) => {
     res.send("🤖 Bot online!");
@@ -135,8 +113,7 @@ app.get("/health", (req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`🚀 Servidor rodando na porta ${PORT}`);
+    console.log(`🚀 Rodando na porta ${PORT}`);
 });
 
-// =========================
 startBot();
