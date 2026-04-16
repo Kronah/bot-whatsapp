@@ -453,7 +453,8 @@ async function startBot() {
         // Apenas gerar QR code se necessário (sem credenciais válidas)
         if (qr) {
             const now = Date.now();
-            if (now - lastQRTime > 10000) {
+            // Delay de 5 minutos para trocar QR code (dar tempo pro WhatsApp conectar)
+            if (now - lastQRTime > 300000) {
                 qrCodeData = qr;
                 lastQRTime = now;
                 console.log("\n📱 QR CODE GERADO! Escaneie com WhatsApp:\n");
