@@ -13,7 +13,6 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 // =========================
-let globalSocket = null;
 let isConnecting = false;
 
 // =========================
@@ -27,13 +26,19 @@ async function startBot() {
         const baileys = await import("@whiskeysockets/baileys");
 
         const makeWASocket = baileys.default;
-        const { fetchLatestBaileysVersion } = baileys;
+        const {
+            fetchLatestBaileysVersion,
+            useMemoryAuthState // 🔥 ESSENCIAL
+        } = baileys;
 
         const { version } = await fetchLatestBaileysVersion();
 
-        // 🔥 SEM SALVAR SESSÃO (FREE MODE)
+        // 🔥 AUTH EM MEMÓRIA (RESOLVE SEU ERRO)
+        const { state, saveCreds } = useMemoryAuthState();
+
         const sock = makeWASocket({
             version,
+            auth: state, // 🔥 AGORA TEM AUTH
 
             browser: ["Ubuntu", "Chrome", "120.0.0"],
 
@@ -42,25 +47,28 @@ async function startBot() {
             generateHighQualityLinkPreview: false
         });
 
-        globalSocket = sock;
+        // salvar em memória (necessário pro fluxo interno)
+        sock.ev.on("creds.update", saveCreds);
 
         // =========================
-        // 🔑 LOGIN POR NÚMERO (SEMPRE)
+        // 🔑 LOGIN POR NÚMERO
         // =========================
-        try {
-            const code = await sock.requestPairingCode("5592993278383");
+        if (!state.creds.registered) {
+            try {
+                const code = await sock.requestPairingCode("5592993278383");
 
-            console.log("\n🔑 CÓDIGO DE PAREAMENTO:");
-            console.log(code);
-            console.log("\n👉 WhatsApp > Dispositivos conectados > Conectar\n");
-        } catch (err) {
-            console.log("⚠️ Erro ao gerar código:", err.message);
+                console.log("\n🔑 CÓDIGO DE PAREAMENTO:");
+                console.log(code);
+                console.log("\n👉 WhatsApp > Dispositivos conectados > Conectar\n");
+            } catch (err) {
+                console.log("⚠️ Erro ao gerar código:", err.message);
+            }
         }
 
         // =========================
         // CONEXÃO
         // =========================
-        sock.ev.on("connection.update", async (update) => {
+        sock.ev.on("connection.update", (update) => {
             const { connection } = update;
 
             if (connection === "open") {
@@ -73,10 +81,7 @@ async function startBot() {
                 isConnecting = false;
 
                 console.log("🔄 Reconectando em 5 segundos...");
-
-                setTimeout(() => {
-                    startBot();
-                }, 5000);
+                setTimeout(startBot, 5000);
             }
         });
 
@@ -94,7 +99,6 @@ async function startBot() {
 
             if (!from) return;
 
-            // resposta simples
             if (texto.toLowerCase() === "ping") {
                 await sock.sendMessage(from, { text: "pong 🟢" });
             }
