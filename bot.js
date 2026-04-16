@@ -1,44 +1,54 @@
-async function startBot() {
-    // Evitar múltiplas conexões simultâneas
-    if (isConnecting) {
-        console.log("⏳ Já está conectando...");
-        return;
-    }
+const express = require("express");
+const cors = require("cors");
+const qrcodeTerminal = require("qrcode-terminal");
 
+// 🔥 LOG DE ERROS (IMPORTANTE)
+process.on("uncaughtException", console.error);
+process.on("unhandledRejection", console.error);
+
+// =========================
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+const PORT = process.env.PORT || 3000;
+
+// =========================
+let makeWASocket, fetchLatestBaileysVersion, DisconnectReason;
+let globalSocket = null;
+let isConnecting = false;
+let reconnectAttempts = 0;
+const maxReconnectAttempts = 5;
+
+// =========================
+// 🚀 BOT PRINCIPAL
+// =========================
+async function startBot() {
+    if (isConnecting) return;
     isConnecting = true;
 
     try {
-        if (!makeWASocket) {
-            const baileys = await import("@whiskeysockets/baileys");
-            makeWASocket = baileys.default;
-            useMultiFileAuthState = baileys.useMultiFileAuthState;
-            fetchLatestBaileysVersion = baileys.fetchLatestBaileysVersion;
-            DisconnectReason = baileys.DisconnectReason;
-        }
+        const baileys = await import("@whiskeysockets/baileys");
+        makeWASocket = baileys.default;
+        fetchLatestBaileysVersion = baileys.fetchLatestBaileysVersion;
+        DisconnectReason = baileys.DisconnectReason;
 
-        const { state, saveCreds } = await useMultiFileAuthState("auth");
+        const { useMongoDBAuthState } = require("./mongoAuth");
+        const { state, saveCreds } = await useMongoDBAuthState();
+
         const { version } = await fetchLatestBaileysVersion();
 
-        await carregarMobs();
-
-        // 🔥 FECHA SOCKET ANTIGO DE VERDADE
+        // 🔥 FECHA SOCKET ANTIGO
         if (globalSocket) {
-            try {
-                globalSocket.end();
-                globalSocket = null;
-                console.log("🔌 Socket antigo encerrado");
-            } catch (e) {}
+            try { globalSocket.end(); } catch {}
         }
 
         const sock = makeWASocket({
             version,
             auth: state,
 
-            // 🔥 REMOVE TERMUX (MAIS SEGURO)
+            // 🔥 SEM TERMUX
             browser: ["Ubuntu", "Chrome", "120.0.0"],
-
-            printQRInTerminal: false,
-            qrTimeout: 60000,
 
             markOnlineOnConnect: false,
             syncFullHistory: false,
@@ -46,83 +56,72 @@ async function startBot() {
         });
 
         globalSocket = sock;
-        reconnectAttempts = 0;
 
+        // salvar sessão
         sock.ev.on("creds.update", saveCreds);
 
+        // =========================
+        // 🔑 LOGIN POR NÚMERO
+        // =========================
+        if (!sock.authState.creds.registered) {
+            const code = await sock.requestPairingCode("5592993278383");
+
+            console.log("\n🔑 CÓDIGO DE PAREAMENTO:");
+            console.log(code);
+            console.log("\n👉 WhatsApp > Dispositivos conectados > Conectar\n");
+        }
+
+        // =========================
+        // CONEXÃO
+        // =========================
         sock.ev.on("connection.update", async (update) => {
-            const { connection, qr, lastDisconnect } = update;
+            const { connection, lastDisconnect } = update;
 
-            // =========================
-            // QR CODE
-            // =========================
-            if (qr) {
-                qrCodeData = qr;
-                console.log("\n📱 Novo QR Code gerado!\n");
-                qrcodeTerminal.generate(qr, { small: true });
-            }
-
-            // =========================
-            // CONECTADO
-            // =========================
             if (connection === "open") {
                 console.log("✅ BOT CONECTADO!");
-                qrCodeData = null;
                 isConnecting = false;
-
-                // evitar múltiplos intervals
-                if (!global.monitorInterval) {
-                    global.monitorInterval = setInterval(() => {
-                        monitorarBoss(sock);
-                    }, 120000);
-                }
+                reconnectAttempts = 0;
             }
 
-            // =========================
-            // DESCONECTADO
-            // =========================
             if (connection === "close") {
                 isConnecting = false;
 
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
 
-                console.log(`❌ Conexão fechada. Código: ${statusCode}`);
+                console.log("❌ Desconectado:", statusCode);
 
-                // 🔴 SESSÃO INVALIDA (PRINCIPAL PROBLEMA)
+                // 🔴 sessão inválida
                 if (
                     statusCode === DisconnectReason.loggedOut ||
                     statusCode === 401 ||
                     statusCode === 428
                 ) {
-                    console.log("🧹 Sessão inválida! Limpando auth...");
+                    console.log("🧹 Limpando sessão no Mongo...");
 
-                    try {
-                        fs.rmSync("auth", { recursive: true, force: true });
-                    } catch (e) {}
+                    const { MongoClient } = require("mongodb");
+                    const client = new MongoClient(process.env.MONGO_URI);
+                    await client.connect();
+                    const db = client.db("whatsapp_bot");
+                    await db.collection("auth").deleteMany({});
+                    await client.close();
 
-                    setTimeout(() => startBot(), 3000);
+                    setTimeout(startBot, 3000);
                     return;
                 }
 
-                // 🔁 ERRO TEMPORÁRIO
+                // 🔁 reconexão
                 if (reconnectAttempts < maxReconnectAttempts) {
                     reconnectAttempts++;
-
-                    const delay = Math.min(2000 * reconnectAttempts, 15000);
-
-                    console.log(
-                        `🔄 Tentando reconectar (${reconnectAttempts}/${maxReconnectAttempts}) em ${delay}ms`
-                    );
-
-                    setTimeout(() => startBot(), delay);
+                    console.log(`🔄 Reconectando (${reconnectAttempts})...`);
+                    setTimeout(startBot, 3000);
                 } else {
-                    console.log("⛔ Limite de tentativas atingido.");
+                    console.log("⛔ Limite de reconexões atingido");
                 }
             }
         });
 
         // =========================
-        // MENSAGENS (MANTIVE SEU CÓDIGO)
+        // MENSAGENS
         // =========================
         sock.ev.on("messages.upsert", async ({ messages }) => {
             const msg = messages[0];
@@ -131,61 +130,40 @@ async function startBot() {
             const from = msg.key.remoteJid;
             const texto = msg.message.conversation || "";
 
-            console.log(`📨 ${texto}`);
+            console.log("📨", texto);
 
             if (!from.endsWith("@g.us")) return;
 
-            // =======================
-            if (from === GRUPO_BOSS) {
-                if (texto.startsWith(".")) {
-                    const busca = texto.replace(".", "");
-                    const resultados = buscarMob(busca);
-
-                    if (resultados.length === 0) {
-                        await sock.sendMessage(from, {
-                            text: "❌ Nenhum mob encontrado"
-                        });
-                        return;
-                    }
-
-                    let resposta = "";
-                    resultados.forEach(m => resposta += formatarMob(m));
-
-                    await sock.sendMessage(from, { text: resposta });
-                }
-
-                if (texto === "Bosslive") {
-                    await atualizarBosses();
-
-                    let resposta = "🔥 BOSS ONLINE:\n\n";
-
-                    bossesOnline.forEach(b => {
-                        resposta += `🐉 ${b.nome}\n📊 ${b.status}\n⏰ ${b.tempo}\n\n`;
-                    });
-
-                    await sock.sendMessage(from, { text: resposta });
-                }
-            }
-
-            // =======================
-            if (from === GRUPO_OLY) {
-                if (texto === "Oly") {
-                    const dados = await pegarOly();
-                    await sock.sendMessage(from, { text: dados });
-                }
-
-                if (texto.startsWith("/")) {
-                    const classe = texto.replace("/", "");
-                    const dados = await pegarOlyPorClasse(classe);
-                    await sock.sendMessage(from, { text: dados });
-                }
+            if (texto === "ping") {
+                await sock.sendMessage(from, { text: "pong 🟢" });
             }
         });
 
-    } catch (error) {
-        console.error("❌ Erro geral:", error.message);
+    } catch (err) {
+        console.error("❌ Erro geral:", err.message);
         isConnecting = false;
-
-        setTimeout(() => startBot(), 10000);
+        setTimeout(startBot, 10000);
     }
 }
+
+// =========================
+// HEALTH CHECK
+// =========================
+app.get("/", (req, res) => {
+    res.send("🤖 Bot rodando!");
+});
+
+app.get("/health", (req, res) => {
+    res.json({
+        status: "online",
+        uptime: process.uptime()
+    });
+});
+
+// =========================
+app.listen(PORT, () => {
+    console.log(`🚀 Servidor rodando na porta ${PORT}`);
+});
+
+// =========================
+startBot();
