@@ -1,15 +1,18 @@
-const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
-const QRCode = require('qrcode');
-const axios = require('axios');
-const cheerio = require('cheerio');
-const express = require('express');
-const cors = require('cors');
-const fs = require('fs');
-const path = require('path');
+const qrcodeTerminal = require("qrcode-terminal");
+// const QRCode = require("qrcode"); // Temporariamente desabilitado para testes locais
+const axios = require("axios");
+const cheerio = require("cheerio");
+const express = require("express");
+const cors = require("cors");
+const fs = require("fs");
+const path = require("path");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Importar Baileys dinamicamente (é ESM)
+let makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion;
 
 const GRUPO_BOSS = "120363426540795167@g.us";
 const GRUPO_OLY  = "120363426376971165@g.us";
@@ -19,7 +22,8 @@ let mobs = [];
 let bossesOnline = [];
 let statusBossAnterior = {};
 let qrCodeData = null;
-let clientReady = false;
+let isConnecting = false;
+let lastQRTime = 0;
 
 // =======================
 // NORMALIZAR TEXTO 🔥
@@ -32,120 +36,176 @@ function normalizar(texto) {
 
 // =======================
 async function carregarMobs() {
-    try {
-        const res = await axios.get("https://raw.githubusercontent.com/Kronah/mob-data/main/dados.json");
-        mobs = res.data;
-        console.log(`✅ ${mobs.length} mobs carregados`);
-    } catch (error) {
-        console.error("❌ Erro ao carregar mobs:", error.message);
-    }
+    const res = await axios.get("https://raw.githubusercontent.com/Kronah/mob-data/main/dados.json");
+    mobs = res.data;
 }
 
 // =======================
+// BUSCA INTELIGENTE REAL 🔥
+// =======================
 function buscarMob(busca) {
     const termo = normalizar(busca);
+
+    // 1️⃣ busca direta (contém)
     let encontrados = mobs.filter(m =>
         normalizar(m["Nome do Mob"]).includes(termo)
     );
+
     if (encontrados.length > 0) return encontrados;
 
+    // 2️⃣ busca por início
     encontrados = mobs.filter(m =>
         normalizar(m["Nome do Mob"]).startsWith(termo)
     );
+
     if (encontrados.length > 0) return encontrados;
 
+    // 3️⃣ busca por similaridade simples
     let sugestoes = mobs.map(m => {
         const nome = normalizar(m["Nome do Mob"]);
+
         let score = 0;
+
         for (let i = 0; i < termo.length; i++) {
             if (nome.includes(termo[i])) score++;
         }
+
         return { mob: m, score };
     });
 
     sugestoes.sort((a, b) => b.score - a.score);
+
     return sugestoes.slice(0, 3).map(s => s.mob);
 }
 
 // =======================
 function formatarMob(m) {
-    return `🐉 MOB\n📌 Número: ${m["Número"] || "-"}\n📌 Nome: ${m["Nome do Mob"] || "-"}\n📂 PT: ${m["Arquivo"] || "-"}\n⭐ Pontos: ${m["Pontos"] || "-"}\n\n`;
+    return `🐉 MOB
+
+📌 Número: ${m["Número"] || "-"}
+📌 Nome: ${m["Nome do Mob"] || "-"}
+📂 PT: ${m["Arquivo"] || "-"}
+⭐ Pontos: ${m["Pontos"] || "-"}
+
+`;
 }
 
 // =======================
 async function atualizarBosses() {
-    try {
-        const { data } = await axios.get("https://divolion.net/?page=boss");
-        const $ = cheerio.load(data);
-        bossesOnline = [];
+    const { data } = await axios.get("https://divolion.net/?page=boss");
+    const $ = cheerio.load(data);
 
-        $("table tr").each((i, el) => {
-            const colunas = $(el).find("td");
-            const nome = $(colunas[0]).text().trim();
-            const status = $(colunas[2]).text().trim();
-            const tempo = $(colunas[3]).text().trim();
-            if (nome && status) {
-                bossesOnline.push({ nome, status, tempo });
-            }
-        });
-    } catch (error) {
-        console.error("❌ Erro ao atualizar bosses:", error.message);
-    }
+    bossesOnline = [];
+
+    $("table tr").each((i, el) => {
+        const colunas = $(el).find("td");
+
+        const nome = $(colunas[0]).text().trim();
+        const status = $(colunas[2]).text().trim();
+        const tempo = $(colunas[3]).text().trim();
+
+        if (nome && status) {
+            bossesOnline.push({ nome, status, tempo });
+        }
+    });
+}
+
+// =======================
+async function monitorarBoss(sock) {
+    const { data } = await axios.get("https://divolion.net/?page=boss");
+    const $ = cheerio.load(data);
+
+    $("table tr").each(async (i, el) => {
+        const colunas = $(el).find("td");
+
+        const nome = $(colunas[0]).text().trim();
+        const status = $(colunas[2]).text().trim();
+
+        if (!nome || !status) return;
+
+        const antigo = statusBossAnterior[nome];
+
+        if (antigo && antigo !== "Alive" && status === "Alive") {
+            await sock.sendMessage(GRUPO_BOSS, {
+                text: `🚨 BOSS NASCEU!\n\n🐉 ${nome}`
+            });
+        }
+
+        statusBossAnterior[nome] = status;
+    });
 }
 
 // =======================
 async function pegarOly() {
-    try {
-        const { data } = await axios.get("https://divolion.net/?page=oly_rank");
-        const $ = cheerio.load(data);
-        let resposta = "🏆 OLY TOP\n\n";
+    const { data } = await axios.get("https://divolion.net/?page=oly_rank");
+    const $ = cheerio.load(data);
 
-        $("table tr").each((i, el) => {
-            const colunas = $(el).find("td");
-            const pos = $(colunas[0]).text().trim();
-            const nome = $(colunas[1]).text().trim();
-            const clan = $(colunas[2]).text().trim();
-            const pontos = $(colunas[3]).text().trim();
-            if (pos && nome) {
-                resposta += `#${pos} ${nome}\n🏰 ${clan}\n⭐ ${pontos}\n\n`;
-            }
-        });
-        return resposta;
-    } catch (error) {
-        console.error("Erro ao pegar OLY:", error.message);
-        return "❌ Erro ao buscar ranking OLY";
-    }
+    let resposta = "🏆 OLY TOP\n\n";
+
+    $("table tr").each((i, el) => {
+        const colunas = $(el).find("td");
+
+        const pos = $(colunas[0]).text().trim();
+        const nome = $(colunas[1]).text().trim();
+        const clan = $(colunas[2]).text().trim();
+        const pontos = $(colunas[3]).text().trim();
+
+        if (pos && nome) {
+            resposta += `#${pos} ${nome}\n🏰 ${clan}\n⭐ ${pontos}\n\n`;
+        }
+    });
+
+    return resposta;
 }
 
 // =======================
 async function pegarOlyPorClasse(classeBusca) {
-    try {
-        const { data } = await axios.get("https://divolion.net/?page=oly_rank");
-        const $ = cheerio.load(data);
-        let resposta = `🏆 OLY - ${classeBusca.toUpperCase()}\n\n`;
+    const { data } = await axios.get("https://divolion.net/?page=oly_rank");
+    const $ = cheerio.load(data);
 
-        $("table tr").each((i, el) => {
-            const linha = $(el).text().toLowerCase();
-            if (linha.includes(classeBusca.toLowerCase())) {
-                const colunas = $(el).find("td");
-                const pos = $(colunas[0]).text().trim();
-                const nome = $(colunas[1]).text().trim();
-                const clan = $(colunas[2]).text().trim();
-                const pontos = $(colunas[3]).text().trim();
-                if (pos && nome) {
-                    resposta += `#${pos} ${nome}\n🏰 ${clan}\n⭐ ${pontos}\n\n`;
-                }
+    let resposta = `🏆 OLY - ${classeBusca.toUpperCase()}\n\n`;
+
+    $("table tr").each((i, el) => {
+        const linha = $(el).text().toLowerCase();
+
+        if (linha.includes(classeBusca.toLowerCase())) {
+            const colunas = $(el).find("td");
+
+            const pos = $(colunas[0]).text().trim();
+            const nome = $(colunas[1]).text().trim();
+            const clan = $(colunas[2]).text().trim();
+            const pontos = $(colunas[3]).text().trim();
+
+            if (pos && nome) {
+                resposta += `#${pos} ${nome}\n🏰 ${clan}\n⭐ ${pontos}\n\n`;
             }
-        });
-        return resposta;
-    } catch (error) {
-        console.error("Erro ao buscar classe OLY:", error.message);
-        return "❌ Erro ao buscar classe";
-    }
+        }
+    });
+
+    return resposta;
 }
 
 // =======================
-// ENDPOINTS HTTP
+app.get("/bosses", (req, res) => {
+    res.json(bossesOnline);
+});
+
+// =======================
+app.get("/qrcode", (req, res) => {
+    res.json({ qrcode: qrCodeData });
+});
+
+// =======================
+app.get("/status", (req, res) => {
+    res.json({ 
+        status: "online", 
+        timestamp: new Date(),
+        qrCode: qrCodeData ? "pending" : "not_needed" 
+    });
+});
+
+// =======================
+// Página HTML para escanear QR Code
 app.get("/", (req, res) => {
     const htmlContent = `
 <!DOCTYPE html>
@@ -279,38 +339,40 @@ app.get("/", (req, res) => {
     res.send(htmlContent);
 });
 
+// =======================
+// Endpoint para gerar QR Code como PNG
 app.get("/qrcode-image", async (req, res) => {
     if (!qrCodeData) {
         return res.status(204).send();
     }
 
     try {
-        const qrImage = await QRCode.toDataURL(qrCodeData, {
-            errorCorrectionLevel: 'H',
-            type: 'image/png',
-            width: 300,
-            margin: 10,
-            color: {
-                dark: '#000000',
-                light: '#FFFFFF',
-            }
-        });
+        // Temporariamente desabilitado - teste local sem QRCode package
+        // const qrImage = await QRCode.toDataURL(qrCodeData, {
+        //     errorCorrectionLevel: 'H',
+        //     type: 'image/png',
+        //     width: 300,
+        //     margin: 10,
+        //     color: {
+        //         dark: '#000000',
+        //         light: '#FFFFFF',
+        //     }
+        // });
 
-        const base64Data = qrImage.replace(/^data:image\/png;base64,/, '');
-        const buffer = Buffer.from(base64Data, 'base64');
-
-        res.setHeader('Content-Type', 'image/png');
-        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-        res.send(buffer);
+        // Retornar placeholder enquanto o pacote não estiver instalado
+        res.status(500).json({ error: 'QRCode generator disabled for local testing' });
+        return;
     } catch (err) {
         console.error('Erro ao gerar QR Code:', err);
         res.status(500).json({ error: 'Erro ao gerar QR Code' });
     }
 });
 
+// =======================
+// Health Check para UptimeRobot (mantém bot acordado)
 app.get("/health", (req, res) => {
     res.status(200).json({ 
-        status: clientReady ? "ready" : "connecting",
+        status: "healthy",
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
         bosses: bossesOnline.length,
@@ -318,118 +380,199 @@ app.get("/health", (req, res) => {
     });
 });
 
-app.get("/status", (req, res) => {
-    res.json({ 
-        status: clientReady ? "online" : "connecting", 
-        timestamp: new Date(),
-        qrCode: qrCodeData ? "pending" : "not_needed" 
-    });
-});
-
 // =======================
-// WHATSAPP CLIENT
-const client = new Client({
-    authStrategy: new LocalAuth({
-        clientId: "bot-lineage"
-    }),
-    puppeteer: {
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-        headless: true
-    }
-});
-
-client.on('qr', (qr) => {
-    qrCodeData = qr;
-    console.log('\n📱 QR CODE GERADO! Escaneie com WhatsApp:\n');
-    console.log(qr);
-});
-
-client.on('authenticated', () => {
-    console.log('✅ Autenticado! Conectando...');
-});
-
-client.on('ready', () => {
-    clientReady = true;
-    qrCodeData = null;
-    console.log('✅ BOT PRONTO! Conectado ao WhatsApp');
-    
-    // Monitorar bosses a cada 2 minutos
-    setInterval(() => {
-        atualizarBosses();
-    }, 120000);
-});
-
-client.on('disconnect', (reason) => {
-    clientReady = false;
-    console.log('❌ Desconectado:', reason);
-});
-
-client.on('message', async (message) => {
-    const texto = message.body.trim();
-    const from = message.from;
-    
-    console.log(`📨 Mensagem recebida: "${texto}" de ${from}`);
-
-    // GRUPO BOSS
-    if (from === GRUPO_BOSS) {
-        if (texto.startsWith(".")) {
-            const busca = texto.replace(".", "");
-            console.log(`🔎 Buscando mob: ${busca}`);
-            const resultados = buscarMob(busca);
-
-            if (resultados.length === 0) {
-                await message.reply("❌ Nenhum mob encontrado");
-                return;
-            }
-
-            let resposta = "";
-            resultados.slice(0, 3).forEach(m => resposta += formatarMob(m));
-            await message.reply(resposta);
-        }
-
-        if (texto === "Bosslive") {
-            console.log("🐉 Comando Bosslive detectado");
-            await atualizarBosses();
-            let resposta = "🔥 BOSS ONLINE:\n\n";
-            bossesOnline.slice(0, 10).forEach(b => {
-                resposta += `🐉 ${b.nome}\n📊 ${b.status}\n⏰ ${b.tempo}\n\n`;
-            });
-            await message.reply(resposta);
-        }
-    }
-
-    // GRUPO OLY
-    if (from === GRUPO_OLY) {
-        if (texto === "Oly") {
-            console.log("🏆 Comando Oly detectado");
-            const dados = await pegarOly();
-            await message.reply(dados);
-        }
-
-        if (texto.startsWith("/")) {
-            console.log("⚔️ Comando de classe detectado");
-            const classe = texto.replace("/", "");
-            const dados = await pegarOlyPorClasse(classe);
-            await message.reply(dados);
-        }
-    }
-});
-
-// =======================
-async function startServer() {
+// Reset Auth - Deleta credenciais e força novo QR code
+app.get("/reset-auth", async (req, res) => {
     try {
-        await carregarMobs();
-        console.log('🚀 Iniciando WhatsApp Bot com whatsapp-web.js...');
+        const authPath = path.join(process.cwd(), "auth");
         
-        app.listen(PORT, () => {
-            console.log(`🚀 Servidor rodando em http://localhost:${PORT}`);
+        // Deletar pasta auth
+        if (fs.existsSync(authPath)) {
+            fs.rmSync(authPath, { recursive: true, force: true });
+            console.log("🗑️ Pasta auth deletada!");
+        }
+        
+        qrCodeData = null;
+        isConnecting = false;
+        
+        res.json({ 
+            status: "success",
+            message: "Auth folder deleted. Restarting bot...",
+            timestamp: new Date().toISOString()
+        });
+        
+        // Reiniciar bot após 2 segundos
+        setTimeout(() => startBot(), 2000);
+        
+    } catch (error) {
+        console.error("Erro ao deletar auth:", error.message);
+        res.status(500).json({ 
+            status: "error",
+            message: error.message 
+        });
+    }
+});
+
+// =======================
+async function startBot() {
+    // Evitar múltiplas tentativas simultâneas
+    if (isConnecting) {
+        console.log("⏳ Já está tentando conectar...");
+        return;
+    }
+    
+    isConnecting = true;
+    
+    try {
+        // Importar Baileys dinamicamente (ESM module)
+        if (!makeWASocket) {
+            const baileys = await import("@whiskeysockets/baileys");
+            makeWASocket = baileys.default;
+            useMultiFileAuthState = baileys.useMultiFileAuthState;
+            fetchLatestBaileysVersion = baileys.fetchLatestBaileysVersion;
+        }
+
+        const { state, saveCreds } = await useMultiFileAuthState("auth");
+        const { version } = await fetchLatestBaileysVersion();
+
+        await carregarMobs();
+
+        const sock = makeWASocket({
+            version,
+            auth: state,
+            browser: ["Termux", "Chrome", "1.0.0"]
         });
 
-        await client.initialize();
+    sock.ev.on("creds.update", saveCreds);
+
+    sock.ev.on("connection.update", (update) => {
+        const { connection, qr, lastDisconnect } = update;
+
+        // Apenas gerar QR code se necessário (sem credenciais válidas)
+        if (qr) {
+            const now = Date.now();
+            // Delay de 5 minutos para trocar QR code (dar tempo pro WhatsApp conectar)
+            if (now - lastQRTime > 300000) {
+                qrCodeData = qr;
+                lastQRTime = now;
+                console.log("\n📱 QR CODE GERADO! Escaneie com WhatsApp:\n");
+                qrcodeTerminal.generate(qr, { small: true });
+                console.log("\n⚠️ Se estiver usando Render, verifique os logs para o QR Code!\n");
+            }
+        }
+
+        if (connection === "open") {
+            qrCodeData = null;
+            isConnecting = false;
+            console.log("✅ BOT ONLINE! Conectado ao WhatsApp com sucesso");
+
+            setInterval(() => {
+                monitorarBoss(sock);
+            }, 120000);
+        }
+
+        if (connection === "close") {
+            // Apenas reconectar se for desconexão por expiração de credenciais
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            console.log(`❌ Conexão fechada (código: ${statusCode})`);
+            
+            // 401 = Desautorizado (credenciais inválidas/expiradas)
+            // 428 = Precondition Required (sessão expirada)
+            if (statusCode === 401 || statusCode === 428) {
+                console.log("🔄 Credenciais inválidas. Reconectando com novo QR code...");
+                isConnecting = false;
+                setTimeout(() => startBot(), 3000);
+            } else {
+                console.log("⏸️ Conexão fechada normalmente. Aguardando...");
+            }
+        }
+    });
+
+    sock.ev.on("messages.upsert", async ({ messages }) => {
+        const msg = messages[0];
+        if (!msg.message) return;
+
+        const from = msg.key.remoteJid;
+        const texto = msg.message.conversation || "";
+        
+        console.log(`📨 Mensagem recebida: "${texto}" de ${from}`);
+
+        if (!from.endsWith("@g.us")) {
+            console.log("⏭️ Ignorado: não é um grupo");
+            return;
+        }
+
+        console.log(`\n🔍 Verificando grupos...`);
+        console.log(`   GRUPO_BOSS: ${GRUPO_BOSS}`);
+        console.log(`   GRUPO_OLY: ${GRUPO_OLY}`);
+        console.log(`   FROM: ${from}\n`);
+
+        // =======================
+        if (from === GRUPO_BOSS) {
+            console.log("✅ Mensagem do GRUPO_BOSS detectada");
+
+            if (texto.startsWith(".")) {
+                const busca = texto.replace(".", "");
+                console.log(`🔎 Buscando mob: ${busca}`);
+
+                const resultados = buscarMob(busca);
+
+                if (resultados.length === 0) {
+                    await sock.sendMessage(from, { text: "❌ Nenhum mob encontrado" });
+                    return;
+                }
+
+                let resposta = "";
+                resultados.slice(0, 3).forEach(m => resposta += formatarMob(m));
+
+                await sock.sendMessage(from, { text: resposta });
+            }
+
+            if (texto === "Bosslive") {
+                console.log("🐉 Comando Bosslive detectado");
+                await atualizarBosses();
+
+                let resposta = "🔥 BOSS ONLINE:\n\n";
+
+                bossesOnline.slice(0, 10).forEach(b => {
+                    resposta += `🐉 ${b.nome}\n📊 ${b.status}\n⏰ ${b.tempo}\n\n`;
+                });
+
+                await sock.sendMessage(from, { text: resposta });
+            }
+        }
+
+        // =======================
+        if (from === GRUPO_OLY) {
+            console.log("✅ Mensagem do GRUPO_OLY detectada");
+
+            if (texto === "Oly") {
+                console.log("🏆 Comando Oly detectado");
+                const dados = await pegarOly();
+                await sock.sendMessage(from, { text: dados });
+            }
+
+            if (texto.startsWith("/")) {
+                console.log("⚔️ Comando de classe detectado");
+                const classe = texto.replace("/", "");
+                const dados = await pegarOlyPorClasse(classe);
+                await sock.sendMessage(from, { text: dados });
+            }
+        }
+    });
     } catch (error) {
-        console.error("❌ Erro ao iniciar:", error.message);
-        setTimeout(() => startServer(), 10000);
+        console.error("❌ Erro ao inicializar bot:", error.message);
+        console.error("🔄 Tentando reconectar em 10 segundos...");
+        isConnecting = false;
+        setTimeout(() => startBot(), 10000);
     }
 }
 
-startServer();
+app.listen(PORT, () => {
+    console.log(`🚀 Servidor rodando em http://localhost:${PORT}`);
+});
+
+setInterval(atualizarBosses, 30000);
+
+startBot();
+
