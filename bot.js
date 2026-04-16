@@ -347,21 +347,23 @@ app.get("/qrcode-image", async (req, res) => {
     }
 
     try {
-        // Temporariamente desabilitado - teste local sem QRCode package
-        // const qrImage = await QRCode.toDataURL(qrCodeData, {
-        //     errorCorrectionLevel: 'H',
-        //     type: 'image/png',
-        //     width: 300,
-        //     margin: 10,
-        //     color: {
-        //         dark: '#000000',
-        //         light: '#FFFFFF',
-        //     }
-        // });
+        const qrImage = await QRCode.toDataURL(qrCodeData, {
+            errorCorrectionLevel: 'H',
+            type: 'image/png',
+            width: 300,
+            margin: 10,
+            color: {
+                dark: '#000000',
+                light: '#FFFFFF',
+            }
+        });
 
-        // Retornar placeholder enquanto o pacote não estiver instalado
-        res.status(500).json({ error: 'QRCode generator disabled for local testing' });
-        return;
+        const base64Data = qrImage.replace(/^data:image\/png;base64,/, '');
+        const buffer = Buffer.from(base64Data, 'base64');
+
+        res.setHeader('Content-Type', 'image/png');
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.send(buffer);
     } catch (err) {
         console.error('Erro ao gerar QR Code:', err);
         res.status(500).json({ error: 'Erro ao gerar QR Code' });
