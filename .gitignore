@@ -1,4 +1,7 @@
-﻿node_modules/
+﻿# Auth folder (credenciais sensíveis)
+auth/
+
+node_modules/
 .env
 .env.local
 .DS_Store
