@@ -1,0 +1,19 @@
+{
+  "name": "bot-whatsapp",
+  "version": "1.0.0",
+  "description": "WhatsApp Bot",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "type": "commonjs",
+  "engines": {
+    "node": "20.x"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^7.0.0-rc.9",
+    "express": "^4.19.2",
+    "cors": "^2.8.5",
+    "qrcode-terminal": "^0.12.0"
+  }
+}
