@@ -24,6 +24,9 @@ let statusBossAnterior = {};
 let qrCodeData = null;
 let isConnecting = false;
 let lastQRTime = 0;
+let globalSocket = null;
+let reconnectAttempts = 0;
+let maxReconnectAttempts = 5;
 
 // =======================
 // NORMALIZAR TEXTO 🔥
@@ -417,6 +420,16 @@ app.get("/reset-auth", async (req, res) => {
 
 // =======================
 async function startBot() {
+    // Fechar socket anterior se existir
+    if (globalSocket && globalSocket.ws && globalSocket.ws.readyState !== globalSocket.ws.CLOSED) {
+        try {
+            globalSocket.ws.close();
+            console.log("🔌 Socket anterior fechada");
+        } catch (e) {
+            console.log("⚠️ Erro ao fechar socket anterior:", e.message);
+        }
+    }
+    
     // Evitar múltiplas tentativas simultâneas
     if (isConnecting) {
         console.log("⏳ Já está tentando conectar...");
@@ -451,6 +464,10 @@ async function startBot() {
             markOnlineThreshold: 30000
         });
 
+        // Armazenar referência global
+        globalSocket = sock;
+        reconnectAttempts = 0;
+
     sock.ev.on("creds.update", saveCreds);
 
     sock.ev.on("connection.update", (update) => {
@@ -472,6 +489,7 @@ async function startBot() {
         if (connection === "open") {
             qrCodeData = null;
             isConnecting = false;
+            reconnectAttempts = 0;
             console.log("✅ BOT ONLINE! Conectado ao WhatsApp com sucesso");
 
             setInterval(() => {
@@ -489,9 +507,18 @@ async function startBot() {
             if (statusCode === 401 || statusCode === 428) {
                 console.log("🔄 Credenciais inválidas. Reconectando com novo QR code...");
                 isConnecting = false;
+                reconnectAttempts = 0;
                 setTimeout(() => startBot(), 3000);
+            } else if (statusCode === undefined && reconnectAttempts < maxReconnectAttempts) {
+                // Reconexão por erro temporário (limite a tentativas)
+                reconnectAttempts++;
+                const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+                console.log(`⚠️ Erro temporário. Tentativa ${reconnectAttempts}/${maxReconnectAttempts} em ${delay}ms...`);
+                isConnecting = false;
+                setTimeout(() => startBot(), delay);
             } else {
-                console.log("⏸️ Conexão fechada normalmente. Aguardando...");
+                console.log("⏸️ Conexão fechada. Aguardando ação do usuário...");
+                isConnecting = false;
             }
         }
     });
