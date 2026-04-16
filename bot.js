@@ -28,17 +28,21 @@ async function startBot() {
         const makeWASocket = baileys.default;
         const {
             fetchLatestBaileysVersion,
-            useMemoryAuthState // 🔥 ESSENCIAL
+            initAuthCreds,
+            makeInMemoryStore
         } = baileys;
 
         const { version } = await fetchLatestBaileysVersion();
 
-        // 🔥 AUTH EM MEMÓRIA (RESOLVE SEU ERRO)
-        const { state, saveCreds } = useMemoryAuthState();
+        // 🔥 AUTH MANUAL (COMPATÍVEL COM TODAS VERSÕES)
+        const authState = {
+            creds: initAuthCreds(),
+            keys: {}
+        };
 
         const sock = makeWASocket({
             version,
-            auth: state, // 🔥 AGORA TEM AUTH
+            auth: authState,
 
             browser: ["Ubuntu", "Chrome", "120.0.0"],
 
@@ -47,22 +51,17 @@ async function startBot() {
             generateHighQualityLinkPreview: false
         });
 
-        // salvar em memória (necessário pro fluxo interno)
-        sock.ev.on("creds.update", saveCreds);
-
         // =========================
         // 🔑 LOGIN POR NÚMERO
         // =========================
-        if (!state.creds.registered) {
-            try {
-                const code = await sock.requestPairingCode("5592993278383");
+        try {
+            const code = await sock.requestPairingCode("5592993278383");
 
-                console.log("\n🔑 CÓDIGO DE PAREAMENTO:");
-                console.log(code);
-                console.log("\n👉 WhatsApp > Dispositivos conectados > Conectar\n");
-            } catch (err) {
-                console.log("⚠️ Erro ao gerar código:", err.message);
-            }
+            console.log("\n🔑 CÓDIGO DE PAREAMENTO:");
+            console.log(code);
+            console.log("\n👉 WhatsApp > Dispositivos conectados > Conectar\n");
+        } catch (err) {
+            console.log("⚠️ Erro ao gerar código:", err.message);
         }
 
         // =========================
