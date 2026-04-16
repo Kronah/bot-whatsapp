@@ -10,10 +10,16 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-// controle global
+// =========================
+// CONTROLE GLOBAL
+// =========================
 let sock = null;
 let isStarted = false;
+let pairingCodeGenerated = false;
 
+// =========================
+// BOT PRINCIPAL
+// =========================
 async function startBot() {
     if (isStarted) return;
     isStarted = true;
@@ -28,7 +34,7 @@ async function startBot() {
             DisconnectReason
         } = baileys;
 
-        // ⚠️ usa memória local temporária (Render free)
+        // 🔐 AUTH LOCAL (Render free - temporário)
         const { state, saveCreds } = await useMultiFileAuthState("./auth");
 
         const { version } = await fetchLatestBaileysVersion();
@@ -36,25 +42,36 @@ async function startBot() {
         sock = makeWASocket({
             version,
             auth: state,
-            browser: ["Ubuntu", "Chrome", "120.0.0"]
+            browser: ["Ubuntu", "Chrome", "120.0.0"],
+            markOnlineOnConnect: false
         });
 
         sock.ev.on("creds.update", saveCreds);
 
-        // 🔐 GERA CÓDIGO APENAS UMA VEZ
-        if (!sock.authState.creds.registered) {
+        // =========================
+        // 🔑 PAREAMENTO (UMA VEZ)
+        // =========================
+        if (!sock.authState.creds.registered && !pairingCodeGenerated) {
+            pairingCodeGenerated = true;
+
             const code = await sock.requestPairingCode("5592993278383");
 
-            console.log("\n🔑 CÓDIGO:");
+            console.log("\n🔑 CÓDIGO DE PAREAMENTO:");
             console.log(code);
-            console.log("\n👉 Use rápido no WhatsApp!\n");
+            console.log("\n👉 WhatsApp > Dispositivos conectados > Conectar\n");
+
+            // ⏳ SEGURA PRA NÃO INVALIDAR
+            await new Promise(resolve => setTimeout(resolve, 60000));
         }
 
+        // =========================
+        // CONEXÃO
+        // =========================
         sock.ev.on("connection.update", (update) => {
             const { connection, lastDisconnect } = update;
 
             if (connection === "open") {
-                console.log("✅ CONECTADO COM SUCESSO!");
+                console.log("✅ BOT CONECTADO COM SUCESSO!");
             }
 
             if (connection === "close") {
@@ -62,13 +79,13 @@ async function startBot() {
 
                 console.log("❌ Desconectado:", statusCode);
 
-                // 🔴 NÃO ficar gerando código infinito
+                // 🔴 sessão inválida → não loopar código
                 if (statusCode === DisconnectReason.loggedOut) {
                     console.log("⚠️ Sessão inválida. Reinicie manualmente.");
                     process.exit(0);
                 }
 
-                // reconectar simples
+                // 🔁 reconexão controlada
                 setTimeout(() => {
                     isStarted = false;
                     startBot();
@@ -76,6 +93,9 @@ async function startBot() {
             }
         });
 
+        // =========================
+        // MENSAGENS
+        // =========================
         sock.ev.on("messages.upsert", async ({ messages }) => {
             const msg = messages[0];
             if (!msg.message) return;
@@ -85,13 +105,13 @@ async function startBot() {
 
             console.log("📩", text);
 
-            if (text === "ping") {
+            if (text.toLowerCase() === "ping") {
                 await sock.sendMessage(from, { text: "pong 🟢" });
             }
         });
 
     } catch (err) {
-        console.error("❌ Erro:", err.message);
+        console.error("❌ Erro geral:", err.message);
 
         setTimeout(() => {
             isStarted = false;
@@ -101,18 +121,22 @@ async function startBot() {
 }
 
 // =========================
-// SERVER (anti sleep Render)
+// SERVER (ANTI-SLEEP RENDER)
 // =========================
 app.get("/", (req, res) => {
-    res.send("🤖 Bot online");
+    res.send("🤖 Bot online!");
 });
 
 app.get("/health", (req, res) => {
-    res.json({ status: "ok" });
+    res.json({
+        status: "online",
+        uptime: process.uptime()
+    });
 });
 
 app.listen(PORT, () => {
-    console.log(`🚀 Rodando na porta ${PORT}`);
+    console.log(`🚀 Servidor rodando na porta ${PORT}`);
 });
 
+// =========================
 startBot();
