@@ -417,7 +417,7 @@ async function startBot() {
     sock.ev.on("connection.update", (update) => {
         const { connection, qr, lastDisconnect } = update;
 
-        // Evitar múltiplos QR codes (apenas um a cada 10 segundos)
+        // Apenas gerar QR code se necessário (sem credenciais válidas)
         if (qr) {
             const now = Date.now();
             if (now - lastQRTime > 10000) {
@@ -432,7 +432,7 @@ async function startBot() {
         if (connection === "open") {
             qrCodeData = null;
             isConnecting = false;
-            console.log("✅ BOT ONLINE! Conexão estabelecida com WhatsApp");
+            console.log("✅ BOT ONLINE! Conectado ao WhatsApp com sucesso");
 
             setInterval(() => {
                 monitorarBoss(sock);
@@ -440,10 +440,18 @@ async function startBot() {
         }
 
         if (connection === "close") {
-            console.log("❌ Conexão fechada. Reconectando em 5 segundos...");
-            if (!isConnecting) {
-                isConnecting = true;
-                setTimeout(() => startBot(), 5000);
+            // Apenas reconectar se for desconexão por expiração de credenciais
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            console.log(`❌ Conexão fechada (código: ${statusCode})`);
+            
+            // 401 = Desautorizado (credenciais inválidas/expiradas)
+            // 428 = Precondition Required (sessão expirada)
+            if (statusCode === 401 || statusCode === 428) {
+                console.log("🔄 Credenciais inválidas. Reconectando com novo QR code...");
+                isConnecting = false;
+                setTimeout(() => startBot(), 3000);
+            } else {
+                console.log("⏸️ Conexão fechada normalmente. Aguardando...");
             }
         }
     });
