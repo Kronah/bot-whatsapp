@@ -1,5 +1,5 @@
 const qrcodeTerminal = require("qrcode-terminal");
-const QRCode = require("qrcode");
+const QRCode = require("qrcode"); // ✅ QRCode library loaded
 const axios = require("axios");
 const cheerio = require("cheerio");
 const express = require("express");
