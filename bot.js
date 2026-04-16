@@ -1,8 +1,7 @@
 const express = require("express");
 const cors = require("cors");
-const qrcodeTerminal = require("qrcode-terminal");
 
-// 🔥 LOG DE ERROS (IMPORTANTE)
+// 🔥 LOG DE ERROS
 process.on("uncaughtException", console.error);
 process.on("unhandledRejection", console.error);
 
@@ -14,11 +13,8 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 // =========================
-let makeWASocket, fetchLatestBaileysVersion, DisconnectReason;
 let globalSocket = null;
 let isConnecting = false;
-let reconnectAttempts = 0;
-const maxReconnectAttempts = 5;
 
 // =========================
 // 🚀 BOT PRINCIPAL
@@ -29,25 +25,16 @@ async function startBot() {
 
     try {
         const baileys = await import("@whiskeysockets/baileys");
-        makeWASocket = baileys.default;
-        fetchLatestBaileysVersion = baileys.fetchLatestBaileysVersion;
-        DisconnectReason = baileys.DisconnectReason;
 
-        const { useMongoDBAuthState } = require("./mongoAuth");
-        const { state, saveCreds } = await useMongoDBAuthState();
+        const makeWASocket = baileys.default;
+        const { fetchLatestBaileysVersion } = baileys;
 
         const { version } = await fetchLatestBaileysVersion();
 
-        // 🔥 FECHA SOCKET ANTIGO
-        if (globalSocket) {
-            try { globalSocket.end(); } catch {}
-        }
-
+        // 🔥 SEM SALVAR SESSÃO (FREE MODE)
         const sock = makeWASocket({
             version,
-            auth: state,
 
-            // 🔥 SEM TERMUX
             browser: ["Ubuntu", "Chrome", "120.0.0"],
 
             markOnlineOnConnect: false,
@@ -57,66 +44,39 @@ async function startBot() {
 
         globalSocket = sock;
 
-        // salvar sessão
-        sock.ev.on("creds.update", saveCreds);
-
         // =========================
-        // 🔑 LOGIN POR NÚMERO
+        // 🔑 LOGIN POR NÚMERO (SEMPRE)
         // =========================
-        if (!sock.authState.creds.registered) {
+        try {
             const code = await sock.requestPairingCode("5592993278383");
 
             console.log("\n🔑 CÓDIGO DE PAREAMENTO:");
             console.log(code);
             console.log("\n👉 WhatsApp > Dispositivos conectados > Conectar\n");
+        } catch (err) {
+            console.log("⚠️ Erro ao gerar código:", err.message);
         }
 
         // =========================
         // CONEXÃO
         // =========================
         sock.ev.on("connection.update", async (update) => {
-            const { connection, lastDisconnect } = update;
+            const { connection } = update;
 
             if (connection === "open") {
                 console.log("✅ BOT CONECTADO!");
                 isConnecting = false;
-                reconnectAttempts = 0;
             }
 
             if (connection === "close") {
+                console.log("❌ Conexão perdida...");
                 isConnecting = false;
 
-                const statusCode = lastDisconnect?.error?.output?.statusCode;
+                console.log("🔄 Reconectando em 5 segundos...");
 
-                console.log("❌ Desconectado:", statusCode);
-
-                // 🔴 sessão inválida
-                if (
-                    statusCode === DisconnectReason.loggedOut ||
-                    statusCode === 401 ||
-                    statusCode === 428
-                ) {
-                    console.log("🧹 Limpando sessão no Mongo...");
-
-                    const { MongoClient } = require("mongodb");
-                    const client = new MongoClient(process.env.MONGO_URI);
-                    await client.connect();
-                    const db = client.db("whatsapp_bot");
-                    await db.collection("auth").deleteMany({});
-                    await client.close();
-
-                    setTimeout(startBot, 3000);
-                    return;
-                }
-
-                // 🔁 reconexão
-                if (reconnectAttempts < maxReconnectAttempts) {
-                    reconnectAttempts++;
-                    console.log(`🔄 Reconectando (${reconnectAttempts})...`);
-                    setTimeout(startBot, 3000);
-                } else {
-                    console.log("⛔ Limite de reconexões atingido");
-                }
+                setTimeout(() => {
+                    startBot();
+                }, 5000);
             }
         });
 
@@ -132,9 +92,10 @@ async function startBot() {
 
             console.log("📨", texto);
 
-            if (!from.endsWith("@g.us")) return;
+            if (!from) return;
 
-            if (texto === "ping") {
+            // resposta simples
+            if (texto.toLowerCase() === "ping") {
                 await sock.sendMessage(from, { text: "pong 🟢" });
             }
         });
@@ -142,6 +103,8 @@ async function startBot() {
     } catch (err) {
         console.error("❌ Erro geral:", err.message);
         isConnecting = false;
+
+        console.log("🔄 Tentando reiniciar em 10s...");
         setTimeout(startBot, 10000);
     }
 }
