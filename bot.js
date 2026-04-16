@@ -440,7 +440,13 @@ async function startBot() {
         const sock = makeWASocket({
             version,
             auth: state,
-            browser: ["Termux", "Chrome", "1.0.0"]
+            browser: ["Termux", "Chrome", "1.0.0"],
+            qrTimeout: 600000, // 10 minutos para escanear QR code
+            retryRequestDelayMs: 100,
+            shouldSyncHistoryMessage: () => false,
+            generateHighQualityLinkPreview: false,
+            syncFullHistory: false,
+            markOnlineThreshold: 30000
         });
 
     sock.ev.on("creds.update", saveCreds);
