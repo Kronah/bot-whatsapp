@@ -1,26 +1,22 @@
 const express = require("express");
 const cors = require("cors");
 
-// 🔥 LOG DE ERROS
 process.on("uncaughtException", console.error);
 process.on("unhandledRejection", console.error);
 
-// =========================
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-// =========================
-let isConnecting = false;
+// controle global
+let sock = null;
+let isStarted = false;
 
-// =========================
-// 🚀 BOT PRINCIPAL
-// =========================
 async function startBot() {
-    if (isConnecting) return;
-    isConnecting = true;
+    if (isStarted) return;
+    isStarted = true;
 
     try {
         const baileys = await import("@whiskeysockets/baileys");
@@ -28,108 +24,95 @@ async function startBot() {
         const makeWASocket = baileys.default;
         const {
             fetchLatestBaileysVersion,
-            initAuthCreds,
-            makeInMemoryStore
+            useMultiFileAuthState,
+            DisconnectReason
         } = baileys;
+
+        // ⚠️ usa memória local temporária (Render free)
+        const { state, saveCreds } = await useMultiFileAuthState("./auth");
 
         const { version } = await fetchLatestBaileysVersion();
 
-        // 🔥 AUTH MANUAL (COMPATÍVEL COM TODAS VERSÕES)
-        const authState = {
-            creds: initAuthCreds(),
-            keys: {}
-        };
-
-        const sock = makeWASocket({
+        sock = makeWASocket({
             version,
-            auth: authState,
-
-            browser: ["Ubuntu", "Chrome", "120.0.0"],
-
-            markOnlineOnConnect: false,
-            syncFullHistory: false,
-            generateHighQualityLinkPreview: false
+            auth: state,
+            browser: ["Ubuntu", "Chrome", "120.0.0"]
         });
 
-        // =========================
-        // 🔑 LOGIN POR NÚMERO
-        // =========================
-        try {
+        sock.ev.on("creds.update", saveCreds);
+
+        // 🔐 GERA CÓDIGO APENAS UMA VEZ
+        if (!sock.authState.creds.registered) {
             const code = await sock.requestPairingCode("5592993278383");
 
-            console.log("\n🔑 CÓDIGO DE PAREAMENTO:");
+            console.log("\n🔑 CÓDIGO:");
             console.log(code);
-            console.log("\n👉 WhatsApp > Dispositivos conectados > Conectar\n");
-        } catch (err) {
-            console.log("⚠️ Erro ao gerar código:", err.message);
+            console.log("\n👉 Use rápido no WhatsApp!\n");
         }
 
-        // =========================
-        // CONEXÃO
-        // =========================
         sock.ev.on("connection.update", (update) => {
-            const { connection } = update;
+            const { connection, lastDisconnect } = update;
 
             if (connection === "open") {
-                console.log("✅ BOT CONECTADO!");
-                isConnecting = false;
+                console.log("✅ CONECTADO COM SUCESSO!");
             }
 
             if (connection === "close") {
-                console.log("❌ Conexão perdida...");
-                isConnecting = false;
+                const statusCode = lastDisconnect?.error?.output?.statusCode;
 
-                console.log("🔄 Reconectando em 5 segundos...");
-                setTimeout(startBot, 5000);
+                console.log("❌ Desconectado:", statusCode);
+
+                // 🔴 NÃO ficar gerando código infinito
+                if (statusCode === DisconnectReason.loggedOut) {
+                    console.log("⚠️ Sessão inválida. Reinicie manualmente.");
+                    process.exit(0);
+                }
+
+                // reconectar simples
+                setTimeout(() => {
+                    isStarted = false;
+                    startBot();
+                }, 5000);
             }
         });
 
-        // =========================
-        // MENSAGENS
-        // =========================
         sock.ev.on("messages.upsert", async ({ messages }) => {
             const msg = messages[0];
             if (!msg.message) return;
 
             const from = msg.key.remoteJid;
-            const texto = msg.message.conversation || "";
+            const text = msg.message.conversation || "";
 
-            console.log("📨", texto);
+            console.log("📩", text);
 
-            if (!from) return;
-
-            if (texto.toLowerCase() === "ping") {
+            if (text === "ping") {
                 await sock.sendMessage(from, { text: "pong 🟢" });
             }
         });
 
     } catch (err) {
-        console.error("❌ Erro geral:", err.message);
-        isConnecting = false;
+        console.error("❌ Erro:", err.message);
 
-        console.log("🔄 Tentando reiniciar em 10s...");
-        setTimeout(startBot, 10000);
+        setTimeout(() => {
+            isStarted = false;
+            startBot();
+        }, 10000);
     }
 }
 
 // =========================
-// HEALTH CHECK
+// SERVER (anti sleep Render)
 // =========================
 app.get("/", (req, res) => {
-    res.send("🤖 Bot rodando!");
+    res.send("🤖 Bot online");
 });
 
 app.get("/health", (req, res) => {
-    res.json({
-        status: "online",
-        uptime: process.uptime()
-    });
+    res.json({ status: "ok" });
 });
 
-// =========================
 app.listen(PORT, () => {
-    console.log(`🚀 Servidor rodando na porta ${PORT}`);
+    console.log(`🚀 Rodando na porta ${PORT}`);
 });
 
-// =========================
 startBot();
