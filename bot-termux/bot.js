@@ -88,10 +88,7 @@ async function startBot() {
             printQRInTerminal: false,
             browser: ['Ubuntu', 'Chrome', '120.0'],
             qrTimeout: 120000,
-            keepAliveIntervalMs: 30000,
-            emitOwnEvents: true,
-            retryRequestDelayMs: 10,
-            maxRetries: 5
+            keepAliveIntervalMs: 30000
         });
 
         // QR Code
