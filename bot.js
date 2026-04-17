@@ -1,5 +1,4 @@
-const qrcodeTerminal = require("qrcode-terminal");
-const QRCode = require("qrcode"); // ✅ QRCode library loaded
+const QRCode = require("qrcode");
 const axios = require("axios");
 const cheerio = require("cheerio");
 const express = require("express");
@@ -16,7 +15,11 @@ let makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion;
 
 const GRUPO_BOSS = "120363426540795167@g.us";
 const GRUPO_OLY  = "120363426376971165@g.us";
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
+
+// Detectar se está rodando no Termux
+const isTermux = process.env.PREFIX && process.env.PREFIX.includes('termux');
+console.log(`📱 Ambiente: ${isTermux ? 'TERMUX' : 'SERVIDOR'}`);
 
 let mobs = [];
 let bossesOnline = [];
@@ -27,6 +30,33 @@ let lastQRTime = 0;
 let globalSocket = null;
 let reconnectAttempts = 0;
 let maxReconnectAttempts = 5;
+let aprendizados = {};
+
+// Carregar aprendizados ao iniciar
+function carregarAprendizados() {
+    try {
+        if (fs.existsSync("aprendizados.json")) {
+            aprendizados = JSON.parse(fs.readFileSync("aprendizados.json", "utf8"));
+            console.log("📚 Aprendizados carregados:", Object.keys(aprendizados).length, "categorias");
+        } else {
+            aprendizados = { mobs: {}, bosses: {}, oly: {}, custom: {}, lastUpdate: new Date().toISOString() };
+            salvarAprendizados();
+        }
+    } catch (err) {
+        console.error("❌ Erro ao carregar aprendizados:", err.message);
+        aprendizados = { mobs: {}, bosses: {}, oly: {}, custom: {}, lastUpdate: new Date().toISOString() };
+    }
+}
+
+// Salvar aprendizados no arquivo
+function salvarAprendizados() {
+    try {
+        aprendizados.lastUpdate = new Date().toISOString();
+        fs.writeFileSync("aprendizados.json", JSON.stringify(aprendizados, null, 2), "utf8");
+    } catch (err) {
+        console.error("❌ Erro ao salvar aprendizados:", err.message);
+    }
+}
 
 // =======================
 // NORMALIZAR TEXTO 🔥
@@ -91,6 +121,62 @@ function formatarMob(m) {
 ⭐ Pontos: ${m["Pontos"] || "-"}
 
 `;
+}
+
+// =======================
+// SISTEMA DE AUTOAPRENDIZADO
+function buscarNoAprendizado(termo) {
+    const termoNormalizado = normalizar(termo);
+    
+    // Buscar em mobs aprendidos
+    for (const [key, value] of Object.entries(aprendizados.mobs || {})) {
+        if (normalizar(key).includes(termoNormalizado) || termoNormalizado.includes(normalizar(key))) {
+            return { tipo: "mob", dados: value, fonte: key };
+        }
+    }
+    
+    // Buscar em custom
+    for (const [key, value] of Object.entries(aprendizados.custom || {})) {
+        if (normalizar(key).includes(termoNormalizado)) {
+            return { tipo: "custom", dados: value, fonte: key };
+        }
+    }
+    
+    return null;
+}
+
+function adicionarAprendizado(categoria, chave, dados, fonte) {
+    if (!aprendizados[categoria]) aprendizados[categoria] = {};
+    aprendizados[categoria][chave] = {
+        dados: dados,
+        fonte: fonte,
+        dataAprendizado: new Date().toISOString()
+    };
+    salvarAprendizados();
+    console.log(`📚 Aprendizado adicionado: ${categoria}/${chave}`);
+}
+
+function listarAprendizados() {
+    let resposta = "📚 APRENDIZADOS DO BOT\n\n";
+    
+    for (const [categoria, items] of Object.entries(aprendizados)) {
+        if (categoria === "lastUpdate") continue;
+        const count = Object.keys(items || {}).length;
+        if (count > 0) {
+            resposta += `📂 ${categoria.toUpperCase()}: ${count}\n`;
+            Object.keys(items).slice(0, 5).forEach(item => {
+                resposta += `  • ${item}\n`;
+            });
+            if (count > 5) resposta += `  ... e mais ${count - 5}\n`;
+            resposta += "\n";
+        }
+    }
+    
+    if (resposta === "📚 APRENDIZADOS DO BOT\n\n") {
+        resposta = "📚 Nenhum aprendizado ainda!\n\nUse: .aprenda <nome> <url>";
+    }
+    
+    return resposta;
 }
 
 // =======================
@@ -536,6 +622,8 @@ async function startBot() {
         console.log(`✅ Versão Baileys: ${version.version}`);
 
         // Carregar mobs de forma assíncrona (não bloqueia o início do bot)
+        carregarAprendizados(); // Carregar aprendizados primeiro
+        
         carregarMobs().catch(err => {
             console.warn("⚠️ Erro ao carregar mobs (bot continuará funcionando):", err.message);
             mobs = []; // Mobs vazios, mas o bot continua
@@ -587,9 +675,12 @@ async function startBot() {
                 qrCodeData = qr;
                 lastQRTime = now;
                 console.log("\n✅ QR CODE GERADO COM SUCESSO!\n");
-                console.log("📱 ESCANEIE O QR CODE:\n");
-                qrcodeTerminal.generate(qr, { small: true });
-                console.log("\n🌐 Ou acesse: https://bot-whatsapp-sw6u.onrender.com/\n");
+                if (!isTermux) {
+                    // Apenas mostra no terminal se não estiver no Termux
+                    console.log("📱 ESCANEIE O QR CODE:\n");
+                    // qrcodeTerminal.generate(qr, { small: true }); // Desabilitado no Termux
+                }
+                console.log("🌐 Acesse a página: http://localhost:8080/\n");
             } else {
                 console.log(`⏭️ QR Code será regenerado em ${Math.floor((300000 - (now - lastQRTime)) / 1000)}s`);
             }
@@ -676,14 +767,67 @@ async function startBot() {
         if (from === GRUPO_BOSS) {
             console.log("✅ Mensagem do GRUPO_BOSS detectada");
 
+            // =======================
+            // COMANDOS DE APRENDIZADO
+            if (texto.startsWith(".aprenda ")) {
+                const args = texto.replace(".aprenda ", "").split("|");
+                const nome = args[0]?.trim();
+                const fonte = args[1]?.trim();
+                
+                if (!nome || !fonte) {
+                    await sock.sendMessage(from, { 
+                        text: "❌ Uso: .aprenda <nome> | <url>\n\nExemplo:\n.aprenda Barqueata | https://divolion.net" 
+                    });
+                    return;
+                }
+                
+                adicionarAprendizado("mobs", nome, { nome }, fonte);
+                await sock.sendMessage(from, { 
+                    text: `✅ Aprendido: ${nome}\n📚 Fonte: ${fonte}` 
+                });
+                return;
+            }
+
+            if (texto === ".aprendizados") {
+                const lista = listarAprendizados();
+                await sock.sendMessage(from, { text: lista });
+                return;
+            }
+
+            if (texto.startsWith(".esqueça ")) {
+                const nome = texto.replace(".esqueça ", "").trim();
+                if (aprendizados.mobs[nome]) {
+                    delete aprendizados.mobs[nome];
+                    salvarAprendizados();
+                    await sock.sendMessage(from, { text: `🗑️ Aprendizado deletado: ${nome}` });
+                } else {
+                    await sock.sendMessage(from, { text: `❌ Não encontrei: ${nome}` });
+                }
+                return;
+            }
+
+            // =======================
+            // BUSCA COM APRENDIZADO
             if (texto.startsWith(".")) {
                 const busca = texto.replace(".", "");
-                console.log(`🔎 Buscando mob: ${busca}`);
+                console.log(`🔎 Buscando: ${busca}`);
 
+                // Primeiro tenta encontrar no aprendizado
+                const aprendido = buscarNoAprendizado(busca);
+                if (aprendido) {
+                    await sock.sendMessage(from, { 
+                        text: `📚 Encontrado no aprendizado!\n\n${aprendido.fonte}` 
+                    });
+                    return;
+                }
+
+                // Se não encontrou, busca no banco de mobs
                 const resultados = buscarMob(busca);
 
                 if (resultados.length === 0) {
-                    await sock.sendMessage(from, { text: "❌ Nenhum mob encontrado" });
+                    await sock.sendMessage(from, { 
+                        text: `❌ Nenhum mob encontrado para: ${busca}\n\n💡 Dica: .aprenda ${busca} | <url>` 
+                    });
                     return;
                 }
 
