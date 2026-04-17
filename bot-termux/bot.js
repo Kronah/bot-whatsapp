@@ -15,6 +15,22 @@ let qrCode = null;
 let commands = {};
 let isConnected = false;
 
+// Função para exibir QR code em ASCII no terminal
+async function displayQRInTerminal(qrCodeData) {
+    try {
+        const qrascii = await QRCode.toString(qrCodeData, { type: 'terminal', width: 10 });
+        console.log('\n' + '='.repeat(50));
+        console.log('📱 ESCANEAR ESTE QR CODE COM WHATSAPP');
+        console.log('='.repeat(50));
+        console.log(qrascii);
+        console.log('='.repeat(50));
+        console.log(`🌐 Ou acesse: http://localhost:${PORT}`);
+        console.log('='.repeat(50) + '\n');
+    } catch (err) {
+        console.error('Erro ao exibir QR:', err.message);
+    }
+}
+
 // Carregar Baileys dinamicamente (ESM)
 let makeWASocket, useMultiFileAuthState, DisconnectReason;
 
@@ -82,12 +98,14 @@ async function startBot() {
 
             if (qr) {
                 qrCode = qr;
-                console.log('📱 QR gerado! Acesse: http://localhost:' + PORT);
+                console.log('\n📱 QR CODE GERADO!\n');
+                // Exibir no terminal em ASCII
+                await displayQRInTerminal(qr);
             }
 
             if (connection === 'open') {
                 isConnected = true;
-                console.log('✅ BOT ONLINE!');
+                console.log('✅ BOT ONLINE! Conectado ao WhatsApp!\n');
             }
 
             if (connection === 'close') {
@@ -101,7 +119,7 @@ async function startBot() {
             }
 
             if (connection === 'connecting') {
-                console.log('🔄 Conectando...');
+                console.log('🔄 Conectando ao WhatsApp...');
             }
         });
 
@@ -212,13 +230,17 @@ app.get('/health', (req, res) => {
 });
 
 // ============ INICIAR ============
-console.log('🚀 Iniciando bot modular...\n');
+console.log('\n');
+console.log('█'.repeat(50));
+console.log('🚀 BOT WHATSAPP MODULAR - INICIANDO');
+console.log('█'.repeat(50));
+console.log('\n');
 loadCommands();
 
 // Iniciar servidor Express ANTES do bot
 app.listen(PORT, () => {
-    console.log(`✅ Servidor rodando em http://localhost:${PORT}\n`);
-    console.log(`📱 Acesse: http://localhost:${PORT} para ver o QR code\n`);
+    console.log(`✅ Servidor web rodando em: http://localhost:${PORT}`);
+    console.log(`\n🔄 Aguardando QR Code...\n`);
 });
 
 // Depois iniciar o bot
