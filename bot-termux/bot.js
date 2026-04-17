@@ -87,9 +87,11 @@ async function startBot() {
             auth: state,
             printQRInTerminal: false,
             browser: ['Ubuntu', 'Chrome', '120.0'],
-            qrTimeout: 60000,
+            qrTimeout: 120000,
             keepAliveIntervalMs: 30000,
-            emitOwnEvents: true
+            emitOwnEvents: true,
+            retryRequestDelayMs: 10,
+            maxRetries: 5
         });
 
         // QR Code
@@ -157,14 +159,20 @@ app.get('/', (req, res) => {
             <html>
                 <head>
                     <title>WhatsApp Bot</title>
-                    <meta http-equiv="refresh" content="3">
+                    <meta http-equiv="refresh" content="5">
+                    <style>
+                        body { text-align: center; padding: 20px; font-family: Arial; background: #f0f0f0; }
+                        .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 20px auto; }
+                        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+                    </style>
                 </head>
-                <body style="text-align: center; padding: 20px; font-family: Arial;">
+                <body>
                     <h1>🤖 WhatsApp Bot</h1>
+                    <div class="spinner"></div>
                     <p style="font-size: 18px;">
-                        ${isConnected ? '✅ Conectado' : '🔄 Aguardando QR Code...'}
+                        ${isConnected ? '✅ Conectado' : '🔄 Aguardando QR Code (pode levar até 2 minutos)...'}
                     </p>
-                    <p><a href="/" style="font-size: 16px;">Atualizar</a></p>
+                    <p style="color: #666; font-size: 14px;">A página atualiza a cada 5 segundos</p>
                 </body>
             </html>
         `);
@@ -198,12 +206,11 @@ app.get('/', (req, res) => {
                 <p>Abra WhatsApp no seu celular e toque em:<br><strong>Configurações > Aparelhos conectados > Conectar aparelho</strong></p>
                 <p>Depois escanear este código:</p>
                 <div id="qr"></div>
-                <p style="color: #666;">A página atualiza automaticamente</p>
+                <p style="color: #666;">Escanear com WhatsApp para conectar</p>
                 <script>
                     if (document.getElementById("qr").innerHTML === '') {
                         new QRCode(document.getElementById("qr"), "${qrCode}");
                     }
-                    setTimeout(() => location.reload(), 3000);
                 </script>
             </body>
         </html>
