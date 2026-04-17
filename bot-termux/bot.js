@@ -1,4 +1,3 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const express = require('express');
 const cors = require('cors');
 const QRCode = require('qrcode');
@@ -14,6 +13,10 @@ app.use(express.json());
 let sock = null;
 let qrCode = null;
 let commands = {};
+let isConnected = false;
+
+// Carregar Baileys dinamicamente (ESM)
+let makeWASocket, useMultiFileAuthState, DisconnectReason;
 
 // ============ CARREGAR COMANDOS ============
 function loadCommands() {
@@ -54,12 +57,23 @@ async function processCommand(sock, msg, from, sender, text) {
 // ============ INICIAR BOT ============
 async function startBot() {
     try {
+        // Importar Baileys dinamicamente
+        if (!makeWASocket) {
+            const module = await import('@whiskeysockets/baileys');
+            makeWASocket = module.default;
+            useMultiFileAuthState = module.useMultiFileAuthState;
+            DisconnectReason = module.DisconnectReason;
+        }
+
         const { state, saveCreds } = await useMultiFileAuthState('auth');
 
         sock = makeWASocket({
             auth: state,
             printQRInTerminal: false,
-            browser: ['Ubuntu', 'Chrome', '120.0']
+            browser: ['Ubuntu', 'Chrome', '120.0'],
+            qrTimeout: 60000,
+            keepAliveIntervalMs: 30000,
+            emitOwnEvents: true
         });
 
         // QR Code
@@ -72,15 +86,22 @@ async function startBot() {
             }
 
             if (connection === 'open') {
+                isConnected = true;
                 console.log('✅ BOT ONLINE!');
             }
 
             if (connection === 'close') {
-                const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-                console.log('⚠️ Desconectado:', shouldReconnect ? 'reconectando...' : 'logout');
+                isConnected = false;
+                const code = lastDisconnect?.error?.output?.statusCode;
+                const shouldReconnect = code !== DisconnectReason.loggedOut;
+                console.log(`⚠️ Desconectado (${code}):`, shouldReconnect ? 'reconectando...' : 'logout');
                 if (shouldReconnect) {
-                    setTimeout(startBot, 3000);
+                    setTimeout(startBot, 5000);
                 }
+            }
+
+            if (connection === 'connecting') {
+                console.log('🔄 Conectando...');
             }
         });
 
@@ -90,7 +111,7 @@ async function startBot() {
         // Mensagens
         sock.ev.on('messages.upsert', async (m) => {
             const msg = m.messages[0];
-            if (!msg.message) return;
+            if (!msg.message || msg.key.fromMe) return;
 
             const from = msg.key.remoteJid;
             const isGroup = from.includes('@g.us');
@@ -116,11 +137,16 @@ app.get('/', (req, res) => {
     if (!qrCode) {
         return res.send(`
             <html>
-                <head><title>WhatsApp Bot</title></head>
+                <head>
+                    <title>WhatsApp Bot</title>
+                    <meta http-equiv="refresh" content="3">
+                </head>
                 <body style="text-align: center; padding: 20px; font-family: Arial;">
                     <h1>🤖 WhatsApp Bot</h1>
-                    <p>Iniciando...</p>
-                    <p><a href="/">Atualizar</a></p>
+                    <p style="font-size: 18px;">
+                        ${isConnected ? '✅ Conectado' : '🔄 Aguardando QR Code...'}
+                    </p>
+                    <p><a href="/" style="font-size: 16px;">Atualizar</a></p>
                 </body>
             </html>
         `);
@@ -140,20 +166,26 @@ app.get('/', (req, res) => {
                     }
                     #qr { 
                         display: inline-block; 
-                        padding: 10px; 
+                        padding: 20px; 
                         background: white; 
                         border-radius: 10px; 
+                        margin: 20px 0;
                     }
                     h1 { color: #25D366; }
+                    p { font-size: 16px; }
                 </style>
             </head>
             <body>
                 <h1>📱 Escanear QR Code</h1>
-                <p>Abra WhatsApp no seu celular e escanear este código</p>
+                <p>Abra WhatsApp no seu celular e toque em:<br><strong>Configurações > Aparelhos conectados > Conectar aparelho</strong></p>
+                <p>Depois escanear este código:</p>
                 <div id="qr"></div>
+                <p style="color: #666;">A página atualiza automaticamente</p>
                 <script>
-                    new QRCode(document.getElementById("qr"), "${qrCode}");
-                    setTimeout(() => location.reload(), 2000);
+                    if (document.getElementById("qr").innerHTML === '') {
+                        new QRCode(document.getElementById("qr"), "${qrCode}");
+                    }
+                    setTimeout(() => location.reload(), 3000);
                 </script>
             </body>
         </html>
@@ -172,14 +204,22 @@ app.get('/qrcode-image', (req, res) => {
 });
 
 app.get('/health', (req, res) => {
-    res.json({ status: sock ? 'online' : 'offline', timestamp: new Date() });
+    res.json({ 
+        status: isConnected ? 'online' : 'offline', 
+        qr: qrCode ? 'pending' : 'ready',
+        timestamp: new Date() 
+    });
 });
 
 // ============ INICIAR ============
 console.log('🚀 Iniciando bot modular...\n');
 loadCommands();
-startBot();
 
+// Iniciar servidor Express ANTES do bot
 app.listen(PORT, () => {
-    console.log(`✅ Servidor rodando em http://localhost:${PORT}`);
+    console.log(`✅ Servidor rodando em http://localhost:${PORT}\n`);
+    console.log(`📱 Acesse: http://localhost:${PORT} para ver o QR code\n`);
 });
+
+// Depois iniciar o bot
+startBot();
